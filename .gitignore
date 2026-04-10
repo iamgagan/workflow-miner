@@ -6,6 +6,8 @@ node_modules/
 dist/
 build/
 out/
+.next/
+tsconfig.tsbuildinfo
 
 # IDE
 .idea/
