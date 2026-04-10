@@ -6,6 +6,7 @@ import { StatCard } from "@/components/stat-card";
 import { ActivityChart } from "@/components/activity-chart";
 import { RecentPatterns } from "@/components/recent-patterns";
 import { SourceStatus } from "@/components/source-status";
+import { ActivityTimeline } from "@/components/activity-timeline";
 
 const MOCK_STATS = [
   {
@@ -107,7 +108,14 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <SourceStatus />
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <SourceStatus />
+        </div>
+        <div className="lg:col-span-1">
+          <ActivityTimeline />
+        </div>
+      </div>
     </div>
   );
 }
