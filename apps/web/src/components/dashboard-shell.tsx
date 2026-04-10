@@ -34,7 +34,7 @@ export function DashboardShell({ email, children }: DashboardShellProps) {
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-1 flex-col overflow-hidden">
           <TopBar email={email} onMenuClick={() => setMobileOpen(true)} />
-          <main className="flex-1 overflow-y-auto p-6">{children}</main>
+          <main className="flex-1 overflow-y-auto p-4 pb-20 md:p-6 md:pb-6">{children}</main>
         </div>
         <WorkflowChat />
       </div>

@@ -7,6 +7,7 @@ import {
   GitBranch,
   Plug,
   Sparkles,
+  PlayCircle,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -19,6 +20,7 @@ const navItems = [
   { href: "/patterns", label: "Patterns", icon: GitBranch },
   { href: "/connectors", label: "Connectors", icon: Plug },
   { href: "/skills", label: "Skills", icon: Sparkles },
+  { href: "/replay", label: "Replay", icon: PlayCircle },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

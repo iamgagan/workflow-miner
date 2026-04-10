@@ -53,7 +53,7 @@ export default function PatternsPage() {
   }, [search, sourceFilter, sortBy]);
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Patterns</h1>
         <p className="text-sm text-muted-foreground">
@@ -79,7 +79,7 @@ export default function PatternsPage() {
               <button
                 key={src}
                 onClick={() => setSourceFilter(sourceFilter === src ? null : src)}
-                className="transition-transform hover:scale-105"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center transition-transform hover:scale-105"
               >
                 <Badge
                   variant="outline"

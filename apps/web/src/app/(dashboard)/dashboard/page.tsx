@@ -7,6 +7,7 @@ import { ActivityChart } from "@/components/activity-chart";
 import { RecentPatterns } from "@/components/recent-patterns";
 import { SourceStatus } from "@/components/source-status";
 import { ActivityTimeline } from "@/components/activity-timeline";
+import { CoachNudge } from "@/components/coach-nudge";
 
 const MOCK_STATS = [
   {
@@ -116,6 +117,8 @@ export default function DashboardPage() {
           <ActivityTimeline />
         </div>
       </div>
+
+      <CoachNudge />
     </div>
   );
 }

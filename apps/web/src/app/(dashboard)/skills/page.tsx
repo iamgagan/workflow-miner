@@ -31,7 +31,7 @@ export default function SkillsPage() {
     : MOCK_SKILLS;
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Sparkles className="h-6 w-6 text-primary" />
         <h1 className="text-2xl font-bold tracking-tight">Skills</h1>
@@ -56,6 +56,7 @@ export default function SkillsPage() {
               onClick={() =>
                 setStatusFilter(option === "all" ? null : option)
               }
+              className="min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               <Badge
                 variant="outline"
