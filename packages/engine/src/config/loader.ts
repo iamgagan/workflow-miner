@@ -1,8 +1,22 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { config as loadDotenv } from "dotenv";
 import { configSchema, type Config } from "./schema.js";
+
+/** Walk up from cwd to find the nearest .env file. */
+function findDotenvPath(): string | undefined {
+  let dir = process.cwd();
+  const root = dirname(dir) === dir ? dir : "/";
+  while (true) {
+    const candidate = join(dir, ".env");
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir || dir === root) break;
+    dir = parent;
+  }
+  return undefined;
+}
 
 const CONFIG_DIR = join(homedir(), ".workflow-miner");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
@@ -122,7 +136,8 @@ function redactErrors(issues: readonly { message: string; path: (string | number
 }
 
 export function loadConfig(): Config {
-  loadDotenv();
+  const envPath = findDotenvPath();
+  loadDotenv(envPath ? { path: envPath } : undefined);
 
   const fileConfig = readConfigFile();
   const envConfig = buildConfigFromEnv();

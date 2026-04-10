@@ -157,7 +157,12 @@ async function fetchCalendarEventsPage(
     );
 
     if (!response.ok) {
-      throw new Error(`Calendar API error: ${response.status} ${response.statusText}`);
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: { message?: string } };
+        if (body.error?.message) detail = ` — ${body.error.message}`;
+      } catch { /* ignore parse errors */ }
+      throw new Error(`Calendar API error: ${response.status} ${response.statusText}${detail}`);
     }
 
     const data = (await response.json()) as CalendarListResponse;

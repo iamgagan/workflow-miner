@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { TopBar } from "@/components/top-bar";
+import { WorkflowChat } from "@/components/workflow-chat";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Sidebar as MobileSidebar } from "@/components/sidebar";
 
@@ -29,10 +30,13 @@ export function DashboardShell({ email, children }: DashboardShellProps) {
         </SheetContent>
       </Sheet>
 
-      {/* Main content */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <TopBar email={email} onMenuClick={() => setMobileOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+      {/* Main content + chat panel */}
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-col overflow-hidden">
+          <TopBar email={email} onMenuClick={() => setMobileOpen(true)} />
+          <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        </div>
+        <WorkflowChat />
       </div>
     </div>
   );
