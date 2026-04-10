@@ -1,0 +1,42 @@
+{
+  "name": "@workflow-miner/engine",
+  "version": "0.1.0",
+  "description": "CLI tool that watches work behavior across Gmail, Slack, Linear, and Calendar, detects recurring workflow patterns, and exports them as Claude skill packs.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "workflow-miner": "./bin/workflow-miner.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "googleapis": "^171.4.0",
+    "nodemailer": "^8.0.5",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.10",
+    "@types/nodemailer": "^8.0.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.9"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "/api/dashboard/route": "/api/dashboard",
+  "/api/patterns/[id]/evidence/route": "/api/patterns/[id]/evidence",
+  "/api/patterns/[id]/route": "/api/patterns/[id]",
+  "/api/patterns/route": "/api/patterns",
+  "/auth/callback/route": "/auth/callback",
+  "/_not-found/page": "/_not-found",
+  "/login/page": "/login",
+  "/page": "/",
+  "/signup/page": "/signup",
+  "/(dashboard)/connectors/page": "/connectors",
+  "/(dashboard)/patterns/[id]/page": "/patterns/[id]",
+  "/(dashboard)/dashboard/page": "/dashboard",
+  "/(dashboard)/patterns/page": "/patterns",
+  "/(dashboard)/settings/page": "/settings",
+  "/(dashboard)/skills/page": "/skills"
+}
