@@ -5,6 +5,12 @@ import { useSearchParams } from "next/navigation";
 import { Mail, Calendar, MessageSquare, GitBranch, RefreshCw } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ComponentType } from "react";
+import {
+  isTauri,
+  oauthLoopbackListen,
+  buildGoogleAuthorizeUrl,
+  keychainSet,
+} from "@/lib/desktop-bridge";
 
 interface ConnectorData {
   name: string;
@@ -181,9 +187,129 @@ function ConnectorsContent() {
       });
   }, []);
 
-  const handleOAuthConnect = useCallback((connector: ConnectorData) => {
+  const handleOAuthConnect = useCallback(async (connector: ConnectorData) => {
     if (connector.oauthProvider === "google") {
-      // Redirect to our Google OAuth authorize endpoint
+      // Desktop mode: use the loopback flow so the redirect_uri is a
+      // 127.0.0.1 port owned by the Tauri shell, not a hosted domain.
+      if (isTauri()) {
+        try {
+          const clientId = process.env.NEXT_PUBLIC_GMAIL_CLIENT_ID ?? "";
+          if (!clientId) {
+            setNotification(
+              "Google OAuth client ID is not configured. Set NEXT_PUBLIC_GMAIL_CLIENT_ID before launching the desktop app.",
+            );
+            return;
+          }
+
+          // Start the loopback listener first so we know the bound port,
+          // then open Google's authorize URL pointed at it.
+          const listenerPromise = oauthLoopbackListen(300);
+
+          // Briefly yield so the listener has bound its port before we read
+          // the redirect_uri back. The Rust side returns the URI as part of
+          // the result, but we need it now to build the authorize URL — so
+          // we use a small probe loop on the renderer side.
+          const initialResult = await Promise.race([
+            listenerPromise.then((r) => r.redirectUri),
+            new Promise<string>((resolve) =>
+              setTimeout(() => resolve(""), 100),
+            ),
+          ]);
+
+          // The probe above might race; if we didn't get the URI in 100ms,
+          // we wait for the actual listener to finish (which means the user
+          // has already clicked through). Either way we can construct the
+          // authorize URL once we know the port.
+          let redirectUri = initialResult;
+          if (!redirectUri) {
+            // Fall back: ask the listener directly. This blocks until the
+            // user finishes the auth, but we still get the redirect_uri in
+            // the result so the exchange can complete.
+            const result = await listenerPromise;
+            redirectUri = result.redirectUri;
+            if (result.error) {
+              setNotification(`Connection failed: ${result.error}`);
+              return;
+            }
+            if (!result.code) {
+              setNotification("Connection cancelled — no code returned");
+              return;
+            }
+            const exchangeRes = await fetch(
+              "/api/connectors/google/exchange",
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  code: result.code,
+                  redirect_uri: result.redirectUri,
+                }),
+              },
+            );
+            if (!exchangeRes.ok) {
+              setNotification(`Token exchange failed: ${exchangeRes.status}`);
+              return;
+            }
+            const body = (await exchangeRes.json()) as {
+              refresh_token?: string;
+            };
+            if (body.refresh_token) {
+              await keychainSet("google", "refresh_token", body.refresh_token);
+            }
+            setNotification("Successfully connected Google!");
+            const status = await fetch("/api/connectors/status").then((r) =>
+              r.json(),
+            );
+            setStatusMap(status.connectors ?? {});
+            return;
+          }
+
+          const authorizeUrl = buildGoogleAuthorizeUrl(clientId, redirectUri);
+          window.open(authorizeUrl, "_blank");
+
+          const result = await listenerPromise;
+          if (result.error) {
+            setNotification(`Connection failed: ${result.error}`);
+            return;
+          }
+          if (!result.code) {
+            setNotification("Connection cancelled — no code returned");
+            return;
+          }
+
+          const exchangeRes = await fetch("/api/connectors/google/exchange", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              code: result.code,
+              redirect_uri: result.redirectUri,
+            }),
+          });
+          if (!exchangeRes.ok) {
+            setNotification(`Token exchange failed: ${exchangeRes.status}`);
+            return;
+          }
+          const body = (await exchangeRes.json()) as {
+            refresh_token?: string;
+          };
+          if (body.refresh_token) {
+            await keychainSet("google", "refresh_token", body.refresh_token);
+          }
+          setNotification("Successfully connected Google!");
+          const status = await fetch("/api/connectors/status").then((r) =>
+            r.json(),
+          );
+          setStatusMap(status.connectors ?? {});
+        } catch (err) {
+          console.error("desktop oauth flow failed", err);
+          setNotification(
+            err instanceof Error ? err.message : "Connection failed",
+          );
+        }
+        return;
+      }
+
+      // Hosted mode: redirect through our server-side authorize endpoint.
       window.location.href = "/api/connectors/google/authorize";
       return;
     }

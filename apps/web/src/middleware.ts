@@ -20,8 +20,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Skip auth enforcement in E2E test / development when explicitly set
-  if (process.env.BYPASS_AUTH === "true") {
+  // Skip auth enforcement in E2E test / development when explicitly set,
+  // or automatically when running in desktop mode (single local user).
+  if (
+    process.env.BYPASS_AUTH === "true" ||
+    process.env.WORKFLOW_MINER_MODE === "desktop"
+  ) {
     return NextResponse.next();
   }
 

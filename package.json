@@ -6,7 +6,10 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint"
+    "lint": "pnpm -r lint",
+    "desktop:dev": "pnpm --filter @workflow-miner/engine build && pnpm --filter @workflow-miner/desktop tauri dev",
+    "desktop:build": "WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/engine build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter web build && pnpm --filter @workflow-miner/desktop tauri build",
+    "desktop:build:universal": "WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/engine build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter web build && pnpm --filter @workflow-miner/desktop tauri build --target universal-apple-darwin"
   },
   "engines": {
     "node": ">=20.0.0"

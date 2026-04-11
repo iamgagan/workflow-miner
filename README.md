@@ -4,17 +4,26 @@ Detect recurring workflow patterns across Gmail, Slack, Linear, and Google Calen
 
 Workflow Miner watches your daily work tools, identifies repeating sequences (bug triage flows, feature development pipelines, customer escalation paths), and surfaces them as actionable patterns with confidence scores.
 
+It runs in two flavors:
+
+- **Desktop app (macOS)** — local-first, your data never leaves your Mac. Brain database is an embedded Postgres (PGlite); OAuth secrets live in the macOS Keychain. See [`apps/desktop/README.md`](apps/desktop/README.md).
+- **Hosted web app** — same Next.js dashboard backed by Supabase, deployable to Vercel. Useful for teams that want a shared workspace; see the deployment section below.
+
 ## Architecture
 
 ```
 workflow-miner-monorepo/
 ├── apps/
-│   └── web/                  # Next.js 15 dashboard + API
-│       ├── src/
-│       │   ├── app/          # Pages & API routes
-│       │   ├── components/   # React components (shadcn/ui)
-│       │   └── lib/          # Supabase clients, utilities
-│       └── e2e/              # Playwright E2E tests (36 specs)
+│   ├── web/                  # Next.js 15 dashboard + API
+│   │   ├── src/
+│   │   │   ├── app/          # Pages & API routes
+│   │   │   ├── components/   # React components (shadcn/ui)
+│   │   │   └── lib/          # Supabase clients, local-shim, utilities
+│   │   └── e2e/              # Playwright E2E tests
+│   └── desktop/              # macOS Tauri shell (wraps apps/web locally)
+│       ├── src-tauri/        # Rust shell, Keychain, OAuth loopback
+│       ├── scripts/          # Next.js sidecar bootstrap + build helpers
+│       └── resources/        # Splash + bundled standalone Next.js output
 ├── packages/
 │   └── engine/               # @workflow-miner/engine
 │       └── src/
@@ -27,6 +36,17 @@ workflow-miner-monorepo/
 │           └── cli/          # CLI commands
 └── vercel.json               # Deployment config
 ```
+
+### Desktop vs hosted: how the same code runs in both
+
+The desktop app reuses the entire Next.js dashboard. The single switch is the `WORKFLOW_MINER_MODE=desktop` environment variable that the Tauri shell sets when spawning the Next.js sidecar:
+
+- **`apps/web/src/lib/supabase/local-shim.ts`** — a PGlite-backed shim that implements the small subset of the Supabase JS client (`from`, `select`, `eq`, `in`, `or`, `gte`, `lt`, `order`, `limit`, `single`, `insert`, `upsert`, `auth.getUser`) that the codebase actually calls. The existing `schema.sql` runs verbatim because PGlite is real WASM Postgres.
+- **`apps/web/src/lib/supabase/{server,admin}.ts`** — env-gated factories that return either a real Supabase client or the local shim depending on `WORKFLOW_MINER_MODE`.
+- **`apps/web/src/middleware.ts`** — skips auth in desktop mode (single local user).
+- **`apps/web/src/lib/local-brain-client.ts`** — drop-in replacement for the engine's hosted `BrainClient`, used in desktop mode by the sync route.
+- **`apps/web/src/lib/desktop-bridge.ts`** — renderer-side bridge into the Tauri shell for Keychain access and OAuth loopback flows.
+- **`apps/desktop/src-tauri/`** — Rust shell that picks a free 127.0.0.1 port, spawns the Next.js sidecar, hosts macOS Keychain commands, and runs the OAuth loopback listener.
 
 ### Data Flow
 
@@ -57,6 +77,32 @@ workflow-miner-monorepo/
 | Deploy | Vercel |
 
 ## Getting Started
+
+Pick the path that matches what you want to run.
+
+### Path A — Desktop app (recommended for individuals)
+
+Local-first. Runs only on your Mac, no Supabase, no hosted accounts.
+
+```bash
+brew install pnpm rustup
+rustup-init -y
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+git clone <repo-url>
+cd workflow-miner
+pnpm install
+
+# Configure Google OAuth (required for Gmail + Calendar)
+cp apps/desktop/.env.example apps/desktop/.env.local
+$EDITOR apps/desktop/.env.local
+
+pnpm desktop:dev
+```
+
+See [`apps/desktop/README.md`](apps/desktop/README.md) for the full architecture, signing/notarization steps, and troubleshooting.
+
+### Path B — Hosted web app
 
 ### Prerequisites
 

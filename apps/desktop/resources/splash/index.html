@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workflow Miner</title>
+  <style>
+    :root {
+      color-scheme: dark light;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+      background: #0a0a0a;
+      color: #fafafa;
+      overflow: hidden;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      gap: 1.5rem;
+      -webkit-app-region: drag;
+    }
+    .logo {
+      font-size: 1.75rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #888;
+    }
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid rgba(255, 255, 255, 0.1);
+      border-top-color: rgba(255, 255, 255, 0.85);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">Workflow Miner</div>
+    <div class="spinner" aria-hidden="true"></div>
+    <div class="subtitle">Starting local brain…</div>
+  </div>
+  <script>
+    // Poll the backend for the loopback URL the Next.js sidecar is serving
+    // on, then redirect when it's ready. The Rust shell sets the URL on
+    // shared state once the sidecar's TCP port is reachable.
+    (async () => {
+      const { invoke } = window.__TAURI__?.core ?? {};
+      if (!invoke) {
+        console.warn("Tauri invoke unavailable — running in browser preview?");
+        return;
+      }
+      for (let i = 0; i < 600; i++) {
+        try {
+          const url = await invoke("server_url");
+          if (typeof url === "string" && url.length > 0) {
+            window.location.replace(url);
+            return;
+          }
+        } catch (err) {
+          console.error("server_url poll failed", err);
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    })();
+  </script>
+</body>
+</html>

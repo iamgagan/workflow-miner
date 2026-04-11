@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { BrainClient as EngineBrainClient } from "@workflow-miner/engine";
 import { createClient } from "@/lib/supabase/server";
+import { isDesktopMode } from "@/lib/supabase/local-shim";
+import { LocalBrainClient } from "@/lib/local-brain-client";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -21,7 +24,14 @@ interface SourceResult {
 
 /**
  * Load credentials for a given source.
- * Tries connector_tokens table first, falls back to env vars.
+ *
+ * Resolution order, in priority:
+ *   1. The `tokens` JSONB blob on the connector_tokens row, if present.
+ *      This is the canonical desktop-mode storage shape.
+ *   2. Individual OAuth columns (access_token, refresh_token) merged with
+ *      bundled client credentials from the environment. This handles the
+ *      hosted Google OAuth flow.
+ *   3. Pure environment variables, for CLI/dev usage.
  */
 async function loadCredentials(
   source: SourceName,
@@ -29,23 +39,57 @@ async function loadCredentials(
   supabase: Awaited<ReturnType<typeof createClient>>,
 ): Promise<Record<string, string>> {
   // Try connector_tokens table first
+  let row: Record<string, unknown> | null = null;
   try {
-    const { data, error } = await supabase
+    const result = await supabase
       .from("connector_tokens")
-      .select("tokens")
+      .select("access_token, refresh_token, expires_at, scopes, tokens, metadata")
       .eq("user_id", userId)
-      .eq("provider", source)
+      .eq("provider", source === "calendar" || source === "gmail" ? "google" : source)
       .single();
 
-    if (!error && data?.tokens && typeof data.tokens === "object") {
-      return data.tokens as Record<string, string>;
+    if (!result.error && result.data) {
+      row = result.data as Record<string, unknown>;
     }
   } catch {
-    // Table may not exist yet — fall through to env vars
+    // Table may not exist yet — fall through
   }
 
-  // Fall back to environment variables
+  // Path 1: tokens JSONB blob already in the canonical shape
+  if (row && row.tokens && typeof row.tokens === "object") {
+    const tokens = row.tokens as Record<string, string>;
+    if (Object.keys(tokens).length > 0) {
+      return tokens;
+    }
+  }
+
+  // Path 2: Individual OAuth columns + env-provided client credentials
   const env = process.env;
+  if (row && (row.refresh_token || row.access_token)) {
+    const refreshToken = String(row.refresh_token ?? row.access_token ?? "");
+    switch (source) {
+      case "gmail":
+        return {
+          GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "",
+          GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET ?? "",
+          GMAIL_REFRESH_TOKEN: refreshToken,
+          GMAIL_USER_EMAIL: env.GMAIL_USER_EMAIL ?? "",
+        };
+      case "calendar":
+        return {
+          CALENDAR_CLIENT_ID: env.GMAIL_CLIENT_ID ?? env.CALENDAR_CLIENT_ID ?? "",
+          CALENDAR_CLIENT_SECRET:
+            env.GMAIL_CLIENT_SECRET ?? env.CALENDAR_CLIENT_SECRET ?? "",
+          CALENDAR_REFRESH_TOKEN: refreshToken,
+        };
+      case "slack":
+        return { SLACK_BOT_TOKEN: refreshToken, SLACK_CHANNEL_IDS: env.SLACK_CHANNEL_IDS ?? "" };
+      case "linear":
+        return { LINEAR_API_KEY: refreshToken };
+    }
+  }
+
+  // Path 3: Pure environment variables (CLI / dev fallback)
   switch (source) {
     case "gmail":
       return {
@@ -167,11 +211,15 @@ export async function POST(request: NextRequest) {
   // 3. Dynamically import the engine
   const engine = await getEngine();
 
-  // 4. Set up brain writer
-  const brainClient = new engine.BrainClient({
-    supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-  });
+  // 4. Set up brain writer — in desktop mode the brain lives in local PGlite,
+  // so we construct a LocalBrainClient and cast it to the engine's BrainClient
+  // shape (structural, only putPage/addTimelineEntry/addLink are used).
+  const brainClient: EngineBrainClient = isDesktopMode()
+    ? (new LocalBrainClient() as unknown as EngineBrainClient)
+    : new engine.BrainClient({
+        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+        supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+      });
   const ingestWriter = new engine.IngestWriter(brainClient);
   const normalizer = new engine.Normalizer();
 

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Required for the JIT used by V8 / Node sidecar. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!-- Outbound networking for connector APIs (Gmail, Slack, Linear, etc). -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- Inbound loopback for the OAuth callback listener and the embedded
+       Next.js sidecar. -->
+  <key>com.apple.security.network.server</key>
+  <true/>
+
+  <!-- Read/write the Application Support directory where the PGlite brain
+       database, exported skill packs, and logs live. -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

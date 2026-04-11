@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Workflow Miner",
+  "version": "0.1.0",
+  "identifier": "com.workflowminer.desktop",
+  "build": {
+    "frontendDist": "../resources/splash",
+    "beforeBuildCommand": "node ../scripts/build-next.mjs"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Workflow Miner",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 600,
+        "decorations": true,
+        "fullscreen": false,
+        "resizable": true,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": null,
+      "capabilities": ["main-capability"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Discover recurring workflow patterns across your tools",
+    "longDescription": "Workflow Miner watches your daily work tools (Gmail, Calendar, Slack, Linear), detects repeating sequences, and exports them as deployable Claude skill packs. Runs entirely on your Mac — your data never leaves the device.",
+    "copyright": "Copyright 2026 Workflow Miner",
+    "publisher": "Workflow Miner",
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "11.0",
+      "exceptionDomain": "127.0.0.1",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": "entitlements.plist"
+    },
+    "resources": [
+      "../resources/next"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "endpoints": [
+        "https://github.com/iamgagan/workflow-miner/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": ""
+    }
+  }
+}

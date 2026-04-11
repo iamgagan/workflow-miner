@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { isDesktopMode } from "@/lib/supabase/local-shim";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS brain_pages (
@@ -50,17 +51,21 @@ SELECT
 `;
 
 export async function POST() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // In desktop mode the local PGlite database is auto-initialized on first
+  // use and always has the schema applied — nothing to set up here.
+  if (!isDesktopMode()) {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!supabaseUrl || !serviceKey) {
-    return NextResponse.json(
-      { error: "Missing SUPABASE_SERVICE_ROLE_KEY — DDL requires service role access" },
-      { status: 500 },
-    );
+    if (!supabaseUrl || !serviceKey) {
+      return NextResponse.json(
+        { error: "Missing SUPABASE_SERVICE_ROLE_KEY — DDL requires service role access" },
+        { status: 500 },
+      );
+    }
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey);
+  const supabase = createAdminClient();
 
   // Verify connection by checking if brain_pages exists
   const { data, error } = await supabase

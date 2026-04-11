@@ -1,7 +1,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { createLocalShimClient, isDesktopMode } from "./local-shim";
 
 export async function createClient() {
+  // Desktop mode: return a PGlite-backed Supabase-compatible shim.
+  // No cookies, no auth — everything is local to this machine.
+  if (isDesktopMode()) {
+    return createLocalShimClient() as unknown as ReturnType<typeof createServerClient>;
+  }
+
   const cookieStore = await cookies();
 
   return createServerClient(

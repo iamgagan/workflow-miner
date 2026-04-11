@@ -1,0 +1,14 @@
+{
+  "$schema": "../../../../node_modules/@tauri-apps/cli/schema.json",
+  "identifier": "main-capability",
+  "description": "Capabilities granted to the main Workflow Miner window. Limited to local IO and the few Tauri plugins the renderer needs to drive OAuth and the keychain. Custom commands defined in src/tokens.rs and src/oauth.rs do not need a permission entry — they're always callable once registered with invoke_handler!.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "shell:allow-open",
+    "dialog:default",
+    "os:default",
+    "process:default"
+  ]
+}
