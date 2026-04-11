@@ -1,15 +1,19 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Playfair_Display } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 
 const inter = Inter({ subsets: ["latin"] });
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-display",
+});
 
 export const metadata: Metadata = {
   title: "Workflow Miner",
   description: "Detect recurring workflow patterns and export them as deployable skill packs",
   manifest: "/manifest.json",
-  themeColor: "#0f172a",
+  themeColor: "#3D5A47",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -32,7 +36,7 @@ export default function RootLayout({
       <head>
         <link rel="apple-touch-icon" href="/icon-192.svg" />
       </head>
-      <body className={inter.className}>
+      <body className={`${inter.className} ${playfair.variable}`}>
         <ThemeProvider>{children}</ThemeProvider>
         <script
           dangerouslySetInnerHTML={{
