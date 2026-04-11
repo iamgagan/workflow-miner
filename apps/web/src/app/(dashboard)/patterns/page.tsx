@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, Layers } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { PatternCard } from "@/components/patterns/pattern-card";
-import { MOCK_PATTERNS, SOURCE_COLORS } from "@/lib/mock-patterns";
+import { SOURCE_COLORS } from "@/lib/mock-patterns";
 import { cn } from "@/lib/utils";
 
 const ALL_SOURCES = ["slack", "gmail", "linear", "calendar"] as const;
@@ -21,36 +22,53 @@ export default function PatternsPage() {
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState("score");
+  const [patterns, setPatterns] = useState<any[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/patterns")
+      .then((res) => res.ok ? res.json() : [])
+      .then((data) => {
+        setPatterns(Array.isArray(data) ? data : []);
+        setLoaded(true);
+      })
+      .catch(() => {
+        setPatterns([]);
+        setLoaded(true);
+      });
+  }, []);
 
   const filtered = useMemo(() => {
-    let patterns = [...MOCK_PATTERNS];
+    let result = [...patterns];
 
     if (search) {
       const q = search.toLowerCase();
-      patterns = patterns.filter(
+      result = result.filter(
         (p) =>
           p.name.toLowerCase().includes(q) ||
-          p.steps.some((s) => s.eventType.toLowerCase().includes(q)),
+          p.steps.some((s: any) => s.eventType.toLowerCase().includes(q)),
       );
     }
 
     if (sourceFilter) {
-      patterns = patterns.filter((p) => p.sources.includes(sourceFilter));
+      result = result.filter((p) => p.sources.includes(sourceFilter));
     }
 
     switch (sortBy) {
       case "frequency":
-        patterns.sort((a, b) => b.frequency - a.frequency);
+        result.sort((a, b) => b.frequency - a.frequency);
         break;
       case "recency":
-        patterns.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
+        result.sort((a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime());
         break;
       default:
-        patterns.sort((a, b) => b.compositeScore - a.compositeScore);
+        result.sort((a, b) => b.compositeScore - a.compositeScore);
     }
 
-    return patterns;
-  }, [search, sourceFilter, sortBy]);
+    return result;
+  }, [search, sourceFilter, sortBy, patterns]);
+
+  const hasData = patterns.length > 0;
 
   return (
     <div className="space-y-6">
@@ -62,7 +80,7 @@ export default function PatternsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-center", !hasData && "opacity-40 pointer-events-none")}>
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -70,6 +88,7 @@ export default function PatternsPage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
+            disabled={!hasData}
           />
         </div>
 
@@ -79,6 +98,7 @@ export default function PatternsPage() {
               <button
                 key={src}
                 onClick={() => setSourceFilter(sourceFilter === src ? null : src)}
+                disabled={!hasData}
                 className="min-h-[44px] min-w-[44px] flex items-center justify-center transition-transform hover:scale-105"
               >
                 <Badge
@@ -96,7 +116,7 @@ export default function PatternsPage() {
             ))}
           </div>
 
-          <Select value={sortBy} onValueChange={setSortBy}>
+          <Select value={sortBy} onValueChange={setSortBy} disabled={!hasData}>
             <SelectTrigger className="w-[160px]">
               <SlidersHorizontal className="mr-2 h-3.5 w-3.5" />
               <SelectValue />
@@ -112,25 +132,45 @@ export default function PatternsPage() {
         </div>
       </div>
 
-      {/* Results count */}
-      <p className="text-xs text-muted-foreground">
-        {filtered.length} pattern{filtered.length !== 1 ? "s" : ""} found
-      </p>
-
-      {/* Grid */}
-      <motion.div layout className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <AnimatePresence mode="popLayout">
-          {filtered.map((pattern) => (
-            <PatternCard key={pattern.id} pattern={pattern} />
-          ))}
-        </AnimatePresence>
-      </motion.div>
-
-      {filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <SlidersHorizontal className="mb-3 h-8 w-8 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">No patterns match your filters</p>
+      {loaded && !hasData && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Layers className="h-12 w-12 text-muted-foreground/30" />
+          <h2 className="font-display text-xl font-semibold mt-4">No patterns detected yet</h2>
+          <p className="text-sm text-muted-foreground max-w-md mt-2">
+            Connect your tools and run your first ingest to discover workflow patterns
+          </p>
+          <Link
+            href="/connectors"
+            className="mt-4 inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90"
+          >
+            Connect Tools
+          </Link>
         </div>
+      )}
+
+      {hasData && (
+        <>
+          {/* Results count */}
+          <p className="text-xs text-muted-foreground">
+            {filtered.length} pattern{filtered.length !== 1 ? "s" : ""} found
+          </p>
+
+          {/* Grid */}
+          <motion.div layout className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <AnimatePresence mode="popLayout">
+              {filtered.map((pattern) => (
+                <PatternCard key={pattern.id} pattern={pattern} />
+              ))}
+            </AnimatePresence>
+          </motion.div>
+
+          {filtered.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <SlidersHorizontal className="mb-3 h-8 w-8 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">No patterns match your filters</p>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

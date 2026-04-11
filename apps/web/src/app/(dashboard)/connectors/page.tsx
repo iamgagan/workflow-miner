@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { Mail, Calendar, MessageSquare, GitBranch, RefreshCw, X, ExternalLink, Copy, Check } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useCallback } from "react";
+import { Mail, Calendar, MessageSquare, GitBranch, RefreshCw } from "lucide-react";
+import { motion } from "framer-motion";
 import type { ComponentType } from "react";
 
 interface ConnectorData {
@@ -13,9 +13,8 @@ interface ConnectorData {
   status: "connected" | "not_configured";
   lastSync?: string;
   events?: number;
-  setupHint?: string;
-  setupSteps?: { title: string; description: string; code?: string; link?: string }[];
-  envVars?: string[];
+  oauthProvider: "google" | "slack" | "linear";
+  connectLabel: string;
 }
 
 const connectors: ConnectorData[] = [
@@ -27,6 +26,8 @@ const connectors: ConnectorData[] = [
     status: "connected",
     lastSync: "2 hours ago",
     events: 104,
+    oauthProvider: "google",
+    connectLabel: "Connect with Google",
   },
   {
     name: "Google Calendar",
@@ -36,6 +37,8 @@ const connectors: ConnectorData[] = [
     status: "connected",
     lastSync: "2 hours ago",
     events: 24,
+    oauthProvider: "google",
+    connectLabel: "Connect with Google",
   },
   {
     name: "Slack",
@@ -43,33 +46,8 @@ const connectors: ConnectorData[] = [
     icon: MessageSquare,
     color: "#a855f7",
     status: "not_configured",
-    setupHint: "Connect your Slack workspace to ingest messages and channel activity",
-    envVars: ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"],
-    setupSteps: [
-      {
-        title: "Create a Slack App",
-        description: "Go to the Slack API dashboard and create a new app for your workspace.",
-        link: "https://api.slack.com/apps",
-      },
-      {
-        title: "Add Bot Scopes",
-        description: "Under OAuth & Permissions, add these bot token scopes: channels:history, channels:read, users:read",
-      },
-      {
-        title: "Install to Workspace",
-        description: "Click 'Install to Workspace' and authorize the app. Copy the Bot User OAuth Token.",
-      },
-      {
-        title: "Add Environment Variables",
-        description: "Add these to your .env file at the project root:",
-        code: "SLACK_BOT_TOKEN=xoxb-your-token\nSLACK_SIGNING_SECRET=your-signing-secret",
-      },
-      {
-        title: "Run Ingest",
-        description: "Test the connection with a dry run:",
-        code: "cd packages/engine && node dist/cli/index.js ingest --source slack --dry-run",
-      },
-    ],
+    oauthProvider: "slack",
+    connectLabel: "Add to Slack",
   },
   {
     name: "Linear",
@@ -77,161 +55,71 @@ const connectors: ConnectorData[] = [
     icon: GitBranch,
     color: "#6366f1",
     status: "not_configured",
-    setupHint: "Connect Linear to track issues, projects, and team activity",
-    envVars: ["LINEAR_API_KEY"],
-    setupSteps: [
-      {
-        title: "Generate an API Key",
-        description: "Go to Linear Settings → API and create a personal API key.",
-        link: "https://linear.app/settings/api",
-      },
-      {
-        title: "Add Environment Variable",
-        description: "Add the key to your .env file at the project root:",
-        code: "LINEAR_API_KEY=lin_api_your-key-here",
-      },
-      {
-        title: "Run Ingest",
-        description: "Test the connection with a dry run:",
-        code: "cd packages/engine && node dist/cli/index.js ingest --source linear --dry-run",
-      },
-    ],
+    oauthProvider: "linear",
+    connectLabel: "Connect Linear",
   },
 ];
 
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+const oauthButtonStyles: Record<string, string> = {
+  google:
+    "bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 shadow-sm",
+  slack:
+    "bg-[#611f69] text-white hover:bg-[#4a154b]",
+  linear:
+    "bg-[#5e6ad2] text-white hover:bg-[#4e5bc2]",
+};
 
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <button
-      onClick={handleCopy}
-      className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      title="Copy to clipboard"
-    >
-      {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
-    </button>
-  );
-}
-
-function SetupDialog({
-  connector,
-  onClose,
+function Notification({
+  message,
+  onDone,
 }: {
-  connector: ConnectorData;
-  onClose: () => void;
+  message: string;
+  onDone: () => void;
 }) {
-  const Icon = connector.icon;
-
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      initial={{ opacity: 0, y: -20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -20 }}
+      onAnimationComplete={() => {
+        const timer = setTimeout(onDone, 3000);
+        return () => clearTimeout(timer);
       }}
+      className="fixed left-1/2 top-6 z-50 -translate-x-1/2 rounded-xl border bg-card px-5 py-3 text-sm shadow-warm-card"
     >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border bg-card p-6 shadow-warm-card"
-      >
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-        >
-          <X className="h-4 w-4" />
-        </button>
-
-        <div className="flex items-center gap-3 mb-6">
-          <div
-            className="flex h-10 w-10 items-center justify-center rounded-full"
-            style={{ backgroundColor: connector.color + "1a" }}
-          >
-            <span style={{ color: connector.color }}>
-              <Icon className="h-5 w-5" />
-            </span>
-          </div>
-          <div>
-            <h2 className="text-lg font-display font-bold">Configure {connector.name}</h2>
-            <p className="text-sm text-muted-foreground">{connector.description}</p>
-          </div>
-        </div>
-
-        {connector.envVars && (
-          <div className="mb-6 rounded-lg border bg-muted/50 p-3">
-            <p className="text-xs font-medium text-muted-foreground mb-1.5">Required environment variables:</p>
-            <div className="flex flex-wrap gap-1.5">
-              {connector.envVars.map((v) => (
-                <code key={v} className="rounded bg-background px-2 py-0.5 text-xs font-mono border">
-                  {v}
-                </code>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <ol className="space-y-5">
-          {connector.setupSteps?.map((step, i) => (
-            <li key={i} className="flex gap-3">
-              <div
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white mt-0.5"
-                style={{ backgroundColor: connector.color }}
-              >
-                {i + 1}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-sm">{step.title}</p>
-                <p className="mt-0.5 text-sm text-muted-foreground">{step.description}</p>
-                {step.link && (
-                  <a
-                    href={step.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-accent transition-colors hover:underline"
-                  >
-                    Open <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
-                {step.code && (
-                  <div className="relative mt-2 rounded-lg border bg-background p-3 pr-10">
-                    <pre className="text-xs font-mono overflow-x-auto whitespace-pre-wrap break-all">
-                      {step.code}
-                    </pre>
-                    <CopyButton text={step.code} />
-                  </div>
-                )}
-              </div>
-            </li>
-          ))}
-        </ol>
-
-        <div className="mt-6 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-secondary"
-          >
-            Close
-          </button>
-        </div>
-      </motion.div>
+      {message}
     </motion.div>
   );
 }
 
 export default function ConnectorsPage() {
-  const [configuring, setConfiguring] = useState<ConnectorData | null>(null);
+  const [syncingMap, setSyncingMap] = useState<Record<string, boolean>>({});
+  const [lastSyncMap, setLastSyncMap] = useState<Record<string, string>>({});
+  const [notification, setNotification] = useState<string | null>(null);
+
+  const handleSync = useCallback((connectorName: string) => {
+    setSyncingMap((prev) => ({ ...prev, [connectorName]: true }));
+    setTimeout(() => {
+      setSyncingMap((prev) => ({ ...prev, [connectorName]: false }));
+      setLastSyncMap((prev) => ({ ...prev, [connectorName]: "Synced just now" }));
+    }, 2000);
+  }, []);
+
+  const handleOAuthConnect = useCallback((connector: ConnectorData) => {
+    setNotification(
+      `OAuth integration coming soon \u2014 this will connect directly to ${connector.name} without any manual setup`
+    );
+  }, []);
 
   return (
     <div className="space-y-6">
+      {notification && (
+        <Notification
+          message={notification}
+          onDone={() => setNotification(null)}
+        />
+      )}
+
       <div>
         <h1 className="font-display text-3xl font-bold tracking-tight">Connectors</h1>
         <p className="text-muted-foreground">
@@ -243,6 +131,9 @@ export default function ConnectorsPage() {
         {connectors.map((connector, index) => {
           const Icon = connector.icon;
           const isConnected = connector.status === "connected";
+          const isSyncing = syncingMap[connector.name] ?? false;
+          const displayLastSync =
+            lastSyncMap[connector.name] ?? connector.lastSync;
 
           return (
             <motion.div
@@ -281,24 +172,50 @@ export default function ConnectorsPage() {
                   {isConnected ? (
                     <div className="mt-4 flex items-center justify-between">
                       <div className="space-y-1 text-sm text-muted-foreground">
-                        <p>Last synced: {connector.lastSync}</p>
+                        <p>Last synced: {displayLastSync}</p>
                         <p>{connector.events} events</p>
                       </div>
-                      <button className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
-                        <RefreshCw className="h-3.5 w-3.5" />
-                        Sync Now
+                      <button
+                        onClick={() => handleSync(connector.name)}
+                        disabled={isSyncing}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-70"
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`}
+                        />
+                        {isSyncing ? "Syncing..." : "Sync Now"}
                       </button>
                     </div>
                   ) : (
                     <div className="mt-4">
                       <p className="text-xs text-muted-foreground">
-                        {connector.setupHint}
+                        Connect your {connector.name} account with one click
                       </p>
                       <button
-                        onClick={() => setConfiguring(connector)}
-                        className="mt-3 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90"
+                        onClick={() => handleOAuthConnect(connector)}
+                        className={`mt-3 inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${oauthButtonStyles[connector.oauthProvider]}`}
                       >
-                        Configure
+                        {connector.oauthProvider === "google" && (
+                          <svg className="h-4 w-4" viewBox="0 0 24 24">
+                            <path
+                              fill="#4285F4"
+                              d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
+                            />
+                            <path
+                              fill="#34A853"
+                              d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                            />
+                            <path
+                              fill="#FBBC05"
+                              d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                            />
+                            <path
+                              fill="#EA4335"
+                              d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                            />
+                          </svg>
+                        )}
+                        {connector.connectLabel}
                       </button>
                     </div>
                   )}
@@ -308,15 +225,6 @@ export default function ConnectorsPage() {
           );
         })}
       </div>
-
-      <AnimatePresence>
-        {configuring && (
-          <SetupDialog
-            connector={configuring}
-            onClose={() => setConfiguring(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 }

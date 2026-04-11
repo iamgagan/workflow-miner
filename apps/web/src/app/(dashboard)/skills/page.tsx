@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SkillCard } from "@/components/skills/skill-card";
 import { SkillDetail } from "@/components/skills/skill-detail";
 import {
-  MOCK_SKILLS,
   STATUS_COLORS,
   STATUS_LABELS,
   type SkillData,
@@ -22,13 +22,17 @@ const FILTER_OPTIONS: readonly (SkillStatus | "all")[] = [
   "exported",
 ] as const;
 
+const skills: SkillData[] = [];
+
 export default function SkillsPage() {
   const [selectedSkill, setSelectedSkill] = useState<SkillData | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
   const filteredSkills = statusFilter
-    ? MOCK_SKILLS.filter((s) => s.status === statusFilter)
-    : MOCK_SKILLS;
+    ? skills.filter((s) => s.status === statusFilter)
+    : skills;
+
+  const hasData = skills.length > 0;
 
   return (
     <div className="space-y-6">
@@ -37,7 +41,7 @@ export default function SkillsPage() {
         <h1 className="font-display text-3xl font-bold tracking-tight">Skills</h1>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className={`flex flex-wrap gap-2 ${!hasData ? "opacity-40 pointer-events-none" : ""}`}>
         {FILTER_OPTIONS.map((option) => {
           const isActive =
             option === "all" ? statusFilter === null : statusFilter === option;
@@ -56,6 +60,7 @@ export default function SkillsPage() {
               onClick={() =>
                 setStatusFilter(option === "all" ? null : option)
               }
+              disabled={!hasData}
               className="min-h-[44px] min-w-[44px] flex items-center justify-center"
             >
               <Badge
@@ -75,29 +80,49 @@ export default function SkillsPage() {
         })}
       </div>
 
-      <motion.div
-        layout
-        className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
-      >
-        <AnimatePresence mode="popLayout">
-          {filteredSkills.map((skill, index) => (
-            <SkillCard
-              key={skill.id}
-              skill={skill}
-              index={index}
-              onClick={() => setSelectedSkill(skill)}
-            />
-          ))}
-        </AnimatePresence>
-      </motion.div>
+      {!hasData && (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Sparkles className="h-12 w-12 text-muted-foreground/30" />
+          <h2 className="font-display text-xl font-semibold mt-4">No skills generated yet</h2>
+          <p className="text-sm text-muted-foreground max-w-md mt-2">
+            Skills are automatically created from your detected patterns
+          </p>
+          <Link
+            href="/patterns"
+            className="mt-4 inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90"
+          >
+            View Patterns
+          </Link>
+        </div>
+      )}
 
-      <SkillDetail
-        skill={selectedSkill}
-        open={selectedSkill !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelectedSkill(null);
-        }}
-      />
+      {hasData && (
+        <>
+          <motion.div
+            layout
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          >
+            <AnimatePresence mode="popLayout">
+              {filteredSkills.map((skill, index) => (
+                <SkillCard
+                  key={skill.id}
+                  skill={skill}
+                  index={index}
+                  onClick={() => setSelectedSkill(skill)}
+                />
+              ))}
+            </AnimatePresence>
+          </motion.div>
+
+          <SkillDetail
+            skill={selectedSkill}
+            open={selectedSkill !== null}
+            onOpenChange={(open) => {
+              if (!open) setSelectedSkill(null);
+            }}
+          />
+        </>
+      )}
     </div>
   );
 }
