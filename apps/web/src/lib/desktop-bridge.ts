@@ -87,7 +87,15 @@ export async function keychainDelete(
   return invoke<boolean>("keychain_delete", { provider, key });
 }
 
-// ── OAuth loopback ───────────────────────────────────────────────────
+// ── OAuth loopback (two-step API) ────────────────────────────────────
+
+export interface LoopbackHandle {
+  /** Stable id used to wait for or cancel this listener. */
+  id: number;
+  /** The 127.0.0.1 URL the listener is bound to. Pass this to the OAuth
+   * provider as `redirect_uri` when opening the authorize URL. */
+  redirectUri: string;
+}
 
 export interface LoopbackResult {
   redirectUri: string;
@@ -97,16 +105,30 @@ export interface LoopbackResult {
 }
 
 /**
- * Bind a loopback HTTP server on a free 127.0.0.1 port and wait for an OAuth
- * provider to redirect back to it with `?code=...`. The returned promise
- * resolves with the captured code (or error) when the redirect arrives, or
- * rejects if the timeout elapses without a callback.
+ * Step 1 of the OAuth loopback flow.
  *
- * Caller is responsible for opening the provider's authorize URL in the
- * system browser with `redirectUri` substituted as the `redirect_uri`
- * parameter — see `connectGoogleViaLoopback` below for the canonical use.
+ * Reserves a free 127.0.0.1 port via the Tauri shell and returns the bound
+ * URI synchronously. The caller can then construct the provider's authorize
+ * URL with this URI as `redirect_uri` and open the system browser. No race
+ * — the listener is guaranteed to be bound by the time this resolves.
  */
-export async function oauthLoopbackListen(
+export async function oauthLoopbackStart(): Promise<LoopbackHandle> {
+  const result = await invoke<{ id: number; redirect_uri: string }>(
+    "oauth_loopback_start",
+  );
+  return { id: result.id, redirectUri: result.redirect_uri };
+}
+
+/**
+ * Step 2 of the OAuth loopback flow.
+ *
+ * Blocks until the previously-started listener receives a redirect from the
+ * provider, the timeout elapses, or `oauthLoopbackCancel(id)` is called.
+ * The listener is consumed on resolution — call `oauthLoopbackStart` again
+ * to start another flow.
+ */
+export async function oauthLoopbackWait(
+  handle: LoopbackHandle,
   timeoutSecs = 180,
 ): Promise<LoopbackResult> {
   const result = await invoke<{
@@ -114,7 +136,7 @@ export async function oauthLoopbackListen(
     code: string | null;
     error: string | null;
     state: string | null;
-  }>("oauth_loopback_listen", { timeoutSecs });
+  }>("oauth_loopback_wait", { id: handle.id, timeoutSecs });
 
   return {
     redirectUri: result.redirect_uri,
@@ -122,6 +144,17 @@ export async function oauthLoopbackListen(
     error: result.error,
     state: result.state,
   };
+}
+
+/**
+ * Cancel an in-flight loopback listener (e.g. user clicked Cancel in the
+ * connectors UI). The corresponding `oauthLoopbackWait` call will reject
+ * with a "listener was cancelled" error on its next poll iteration.
+ *
+ * Returns `true` if a listener was cancelled, `false` if the id is unknown.
+ */
+export async function oauthLoopbackCancel(id: number): Promise<boolean> {
+  return invoke<boolean>("oauth_loopback_cancel", { id });
 }
 
 // ── High-level connector flows ───────────────────────────────────────
@@ -136,20 +169,22 @@ const GOOGLE_SCOPES = [
 /**
  * End-to-end Google OAuth flow for the desktop app.
  *
- * 1. Reserve a loopback port on 127.0.0.1 via the Tauri shell.
- * 2. Build the Google authorize URL pointing at that loopback URL.
- * 3. Open the URL in the user's default browser.
- * 4. Wait for the redirect and capture the auth code.
- * 5. POST the code to `/api/connectors/google/exchange`, which performs the
- *    token exchange server-side (so the client_secret never crosses the
- *    network from the renderer) and stores the refresh token in the local
- *    PGlite brain plus the keychain.
+ *   1. Start the loopback listener (gets the bound redirect URI synchronously).
+ *   2. Build the Google authorize URL with that redirect URI.
+ *   3. Open the URL in the user's default browser.
+ *   4. Wait for the listener to receive the redirect and capture the auth code.
+ *   5. POST the code to `/api/connectors/google/exchange`, which performs the
+ *      token exchange server-side so `client_secret` never leaves the Next.js
+ *      process, and persists into the local PGlite brain.
+ *   6. Mirror the refresh token into the macOS Keychain.
  *
- * Returns `true` on success, throws otherwise.
+ * No race because of the two-step API: the listener is bound before the
+ * browser ever opens.
  */
 export async function connectGoogleViaLoopback(
   clientId: string,
-): Promise<boolean> {
+  options: { timeoutSecs?: number } = {},
+): Promise<{ refreshToken: string | null }> {
   if (!isTauri()) {
     throw new Error("connectGoogleViaLoopback requires the Tauri shell");
   }
@@ -157,26 +192,17 @@ export async function connectGoogleViaLoopback(
     throw new Error("missing Google OAuth client_id");
   }
 
-  // 1. Start the loopback listener first so we have the redirect URI ready
-  // before we open the browser.
-  const listenerPromise = oauthLoopbackListen(300);
+  // 1. Bind the loopback listener — returns synchronously with the URI.
+  const handle = await oauthLoopbackStart();
 
-  // The redirect URI is determined by the listener's bound port, but we need
-  // it before opening the browser. We solve this with a small race: kick off
-  // the listener, then immediately ask Tauri for the bound port. The shell
-  // returns the URI as part of the LoopbackResult — we read it from a
-  // microtask before the redirect actually happens by reusing the listener
-  // promise. To keep things simple here, we instead make a second invoke
-  // that returns the URI synchronously after the listener is registered.
-  // For now, the listener result includes redirect_uri so callers should
-  // construct the authorize URL after the listener resolves.
-  //
-  // In practice the renderer should: (a) open a small placeholder, (b) call
-  // `oauthLoopbackListen`, (c) when it resolves, exchange the code.
-  // Below is a simplified single-shot variant: open the authorize URL with
-  // a precomputed loopback port via Tauri's shell open after we know it.
+  // 2 + 3. Build the authorize URL and open it in the system browser.
+  const authorizeUrl = buildGoogleAuthorizeUrl(clientId, handle.redirectUri);
+  if (typeof window !== "undefined") {
+    window.open(authorizeUrl, "_blank");
+  }
 
-  const result = await listenerPromise;
+  // 4. Wait for the redirect.
+  const result = await oauthLoopbackWait(handle, options.timeoutSecs ?? 300);
   if (result.error) {
     throw new Error(`google oauth error: ${result.error}`);
   }
@@ -184,7 +210,7 @@ export async function connectGoogleViaLoopback(
     throw new Error("google oauth completed without a code");
   }
 
-  // 5. Exchange the code for tokens via our server route.
+  // 5. Exchange the code server-side.
   const exchangeResponse = await fetch("/api/connectors/google/exchange", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -193,23 +219,19 @@ export async function connectGoogleViaLoopback(
       redirect_uri: result.redirectUri,
     }),
   });
-
   if (!exchangeResponse.ok) {
     const detail = await exchangeResponse.text();
     throw new Error(`token exchange failed: ${detail}`);
   }
 
-  // Mirror the refresh token into the keychain for redundancy.
   const body = (await exchangeResponse.json()) as { refresh_token?: string };
+
+  // 6. Mirror into the keychain.
   if (body.refresh_token) {
     await keychainSet("google", "refresh_token", body.refresh_token);
   }
 
-  // The above flow has a race: we open the listener but never open the
-  // browser. The connectors page should call openGoogleAuthorizeUrl(...)
-  // immediately after starting the listener. See `openGoogleAuthorizeUrl`.
-  void clientId;
-  return true;
+  return { refreshToken: body.refresh_token ?? null };
 }
 
 /**

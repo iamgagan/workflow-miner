@@ -3,24 +3,42 @@
 //! Google's OAuth 2.0 spec for installed apps (RFC 8252) allows the redirect
 //! URI to be `http://127.0.0.1:<port>` where the desktop app spins up a
 //! short-lived loopback HTTP server, captures the auth code from the query
-//! string, then closes itself. This module provides the `oauth_loopback_listen`
-//! Tauri command that the JavaScript layer can call to do exactly that.
+//! string, then closes itself.
 //!
-//! Flow from the renderer's perspective:
-//!   1. JS calls `invoke('oauth_loopback_listen', { timeoutSecs: 120 })`.
-//!   2. Rust binds to a free port on 127.0.0.1 and returns the URL.
-//!   3. JS opens the OAuth provider's authorize URL with that loopback URL
-//!      as the `redirect_uri`.
-//!   4. The provider redirects back, this server captures `?code=...`,
-//!      replies with a friendly "you can close this window" page, and
-//!      resolves the Rust future with the captured code.
-//!   5. JS exchanges the code for tokens and stores them in the keychain.
+//! This module exposes a two-step API so the renderer never has to race
+//! between binding the listener and opening the browser:
+//!
+//!   1. `oauth_loopback_start()` binds a listener on a free 127.0.0.1 port
+//!      and returns `{ id, redirect_uri }` immediately. The renderer uses
+//!      `redirect_uri` to construct the provider's authorize URL and open
+//!      the system browser.
+//!
+//!   2. `oauth_loopback_wait(id, timeoutSecs)` blocks until the loopback
+//!      receives a redirect from the provider, then returns `{ code, error,
+//!      state }`. The listener is consumed and removed from the registry on
+//!      the first match.
+//!
+//!   3. `oauth_loopback_cancel(id)` lets the renderer abort an in-flight
+//!      listener (e.g. if the user clicks Cancel in the connectors UI).
+//!
+//! Multiple concurrent listeners are supported via a global registry keyed
+//! by an incrementing u64 id.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
+use once_cell::sync::Lazy;
 use serde::Serialize;
+
+#[derive(Debug, Serialize)]
+pub struct LoopbackHandle {
+    pub id: u64,
+    pub redirect_uri: String,
+}
 
 #[derive(Debug, Serialize)]
 pub struct LoopbackResult {
@@ -38,6 +56,10 @@ pub enum OauthError {
     Timeout,
     #[error("invalid request line")]
     BadRequest,
+    #[error("unknown listener id: {0}")]
+    UnknownId(u64),
+    #[error("listener was cancelled")]
+    Cancelled,
 }
 
 impl serde::Serialize for OauthErrorResponse {
@@ -66,28 +88,68 @@ impl From<OauthError> for OauthErrorResponse {
 
 const SUCCESS_HTML: &str = "<!doctype html><html><head><meta charset='utf-8'><title>Workflow Miner</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#fafafa}div{text-align:center;padding:2rem}</style></head><body><div><h1>Connected</h1><p>You can close this window and return to Workflow Miner.</p></div></body></html>";
 
-/// Listen on a free loopback port for an OAuth callback. Blocks until the
-/// provider redirects back with a `code` (or `error`) query parameter, or
-/// until the timeout elapses.
+/// State held in the global registry for each in-flight listener.
+struct ListenerSlot {
+    listener: Option<TcpListener>,
+    redirect_uri: String,
+    cancelled: bool,
+}
+
+static REGISTRY: Lazy<Mutex<HashMap<u64, ListenerSlot>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Bind a free loopback port and register a listener. Returns a handle the
+/// renderer uses to wait for / cancel the listener.
 #[tauri::command]
-pub async fn oauth_loopback_listen(
+pub fn oauth_loopback_start() -> Result<LoopbackHandle, OauthErrorResponse> {
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(OauthError::from)?;
+    let local_addr = listener.local_addr().map_err(OauthError::from)?;
+    let redirect_uri = format!("http://127.0.0.1:{}", local_addr.port());
+    let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+
+    let mut registry = REGISTRY.lock().unwrap();
+    registry.insert(
+        id,
+        ListenerSlot {
+            listener: Some(listener),
+            redirect_uri: redirect_uri.clone(),
+            cancelled: false,
+        },
+    );
+
+    Ok(LoopbackHandle { id, redirect_uri })
+}
+
+/// Wait for the OAuth provider to redirect back to the loopback listener.
+/// Blocks until a redirect arrives, the timeout elapses, or the listener
+/// is cancelled. Removes the listener from the registry on completion.
+#[tauri::command]
+pub async fn oauth_loopback_wait(
+    id: u64,
     timeout_secs: Option<u64>,
 ) -> Result<LoopbackResult, OauthErrorResponse> {
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(180));
 
-    // Bind on the OS-assigned port to avoid collisions.
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(OauthError::from)?;
-    listener
-        .set_nonblocking(false)
-        .map_err(OauthError::from)?;
-    let local_addr = listener.local_addr().map_err(OauthError::from)?;
-    let redirect_uri = format!("http://127.0.0.1:{}", local_addr.port());
+    // Take ownership of the listener for this call. The slot stays in the
+    // registry (so cancel() can flag it) but with `listener: None` to mark
+    // it as in-flight.
+    let (listener, redirect_uri) = {
+        let mut registry = REGISTRY.lock().unwrap();
+        let slot = registry
+            .get_mut(&id)
+            .ok_or(OauthError::UnknownId(id))
+            .map_err(OauthErrorResponse::from)?;
+        let listener = slot
+            .listener
+            .take()
+            .ok_or(OauthError::Cancelled)
+            .map_err(OauthErrorResponse::from)?;
+        (listener, slot.redirect_uri.clone())
+    };
 
-    // Run the blocking accept on a worker so we don't stall the Tauri loop.
     let result = tokio::task::spawn_blocking(move || -> Result<LoopbackResult, OauthError> {
-        listener
-            .set_nonblocking(true)
-            .map_err(OauthError::from)?;
+        listener.set_nonblocking(true)?;
         let started = std::time::Instant::now();
 
         loop {
@@ -96,6 +158,14 @@ pub async fn oauth_loopback_listen(
                     return handle_request(stream, &redirect_uri);
                 }
                 Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Honor cancellation by checking the registry slot.
+                    if let Ok(reg) = REGISTRY.try_lock() {
+                        if let Some(slot) = reg.get(&id) {
+                            if slot.cancelled {
+                                return Err(OauthError::Cancelled);
+                            }
+                        }
+                    }
                     if started.elapsed() >= timeout {
                         return Err(OauthError::Timeout);
                     }
@@ -109,9 +179,31 @@ pub async fn oauth_loopback_listen(
     .await
     .map_err(|e| OauthErrorResponse {
         message: format!("oauth task join error: {e}"),
-    })??;
+    })?;
 
-    Ok(result)
+    // Remove the slot from the registry regardless of outcome — the listener
+    // is consumed.
+    {
+        let mut registry = REGISTRY.lock().unwrap();
+        registry.remove(&id);
+    }
+
+    Ok(result?)
+}
+
+/// Cancel an in-flight listener. The corresponding `oauth_loopback_wait`
+/// call will return an error on its next poll iteration. Returns `true`
+/// if a listener was cancelled, `false` if the id was not found.
+#[tauri::command]
+pub fn oauth_loopback_cancel(id: u64) -> Result<bool, OauthErrorResponse> {
+    let mut registry = REGISTRY.lock().unwrap();
+    match registry.get_mut(&id) {
+        Some(slot) => {
+            slot.cancelled = true;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 fn handle_request(stream: TcpStream, redirect_uri: &str) -> Result<LoopbackResult, OauthError> {

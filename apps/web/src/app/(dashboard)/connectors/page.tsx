@@ -7,8 +7,7 @@ import { motion } from "framer-motion";
 import type { ComponentType } from "react";
 import {
   isTauri,
-  oauthLoopbackListen,
-  buildGoogleAuthorizeUrl,
+  connectGoogleViaLoopback,
   keychainSet,
 } from "@/lib/desktop-bridge";
 
@@ -136,6 +135,47 @@ function ConnectorsContent() {
   const [notification, setNotification] = useState<string | null>(null);
   const [statusMap, setStatusMap] = useState<Record<string, ConnectorStatus>>({});
   const [loading, setLoading] = useState(true);
+  const [manualTokenProvider, setManualTokenProvider] = useState<
+    "slack" | "linear" | null
+  >(null);
+
+  const handleManualTokenSubmit = useCallback(
+    async (provider: "slack" | "linear", token: string, channelIds?: string) => {
+      try {
+        const res = await fetch("/api/connectors/manual-token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider, token, channelIds }),
+        });
+        if (!res.ok) {
+          const detail = await res.text();
+          setNotification(`Failed to save ${provider} token: ${detail}`);
+          return;
+        }
+        // Mirror into the OS keychain too when running in the desktop
+        // shell. The keychain is the primary store; the connector_tokens
+        // row exists so the sync route can find the credentials shape.
+        if (isTauri()) {
+          const key = provider === "slack" ? "bot_token" : "api_key";
+          await keychainSet(provider, key, token).catch((err) => {
+            console.warn("keychain mirror failed (non-fatal)", err);
+          });
+        }
+        setNotification(`Successfully connected ${provider}!`);
+        setManualTokenProvider(null);
+        const status = await fetch("/api/connectors/status").then((r) =>
+          r.json(),
+        );
+        setStatusMap(status.connectors ?? {});
+      } catch (err) {
+        console.error("manual token submit failed", err);
+        setNotification(
+          err instanceof Error ? err.message : "Connection failed",
+        );
+      }
+    },
+    [],
+  );
 
   // Fetch real connector status on mount
   useEffect(() => {
@@ -189,112 +229,18 @@ function ConnectorsContent() {
 
   const handleOAuthConnect = useCallback(async (connector: ConnectorData) => {
     if (connector.oauthProvider === "google") {
-      // Desktop mode: use the loopback flow so the redirect_uri is a
+      // Desktop mode: use the two-step loopback flow so the redirect_uri is a
       // 127.0.0.1 port owned by the Tauri shell, not a hosted domain.
       if (isTauri()) {
+        const clientId = process.env.NEXT_PUBLIC_GMAIL_CLIENT_ID ?? "";
+        if (!clientId) {
+          setNotification(
+            "Google OAuth client ID is not configured. Set NEXT_PUBLIC_GMAIL_CLIENT_ID before launching the desktop app.",
+          );
+          return;
+        }
         try {
-          const clientId = process.env.NEXT_PUBLIC_GMAIL_CLIENT_ID ?? "";
-          if (!clientId) {
-            setNotification(
-              "Google OAuth client ID is not configured. Set NEXT_PUBLIC_GMAIL_CLIENT_ID before launching the desktop app.",
-            );
-            return;
-          }
-
-          // Start the loopback listener first so we know the bound port,
-          // then open Google's authorize URL pointed at it.
-          const listenerPromise = oauthLoopbackListen(300);
-
-          // Briefly yield so the listener has bound its port before we read
-          // the redirect_uri back. The Rust side returns the URI as part of
-          // the result, but we need it now to build the authorize URL — so
-          // we use a small probe loop on the renderer side.
-          const initialResult = await Promise.race([
-            listenerPromise.then((r) => r.redirectUri),
-            new Promise<string>((resolve) =>
-              setTimeout(() => resolve(""), 100),
-            ),
-          ]);
-
-          // The probe above might race; if we didn't get the URI in 100ms,
-          // we wait for the actual listener to finish (which means the user
-          // has already clicked through). Either way we can construct the
-          // authorize URL once we know the port.
-          let redirectUri = initialResult;
-          if (!redirectUri) {
-            // Fall back: ask the listener directly. This blocks until the
-            // user finishes the auth, but we still get the redirect_uri in
-            // the result so the exchange can complete.
-            const result = await listenerPromise;
-            redirectUri = result.redirectUri;
-            if (result.error) {
-              setNotification(`Connection failed: ${result.error}`);
-              return;
-            }
-            if (!result.code) {
-              setNotification("Connection cancelled — no code returned");
-              return;
-            }
-            const exchangeRes = await fetch(
-              "/api/connectors/google/exchange",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  code: result.code,
-                  redirect_uri: result.redirectUri,
-                }),
-              },
-            );
-            if (!exchangeRes.ok) {
-              setNotification(`Token exchange failed: ${exchangeRes.status}`);
-              return;
-            }
-            const body = (await exchangeRes.json()) as {
-              refresh_token?: string;
-            };
-            if (body.refresh_token) {
-              await keychainSet("google", "refresh_token", body.refresh_token);
-            }
-            setNotification("Successfully connected Google!");
-            const status = await fetch("/api/connectors/status").then((r) =>
-              r.json(),
-            );
-            setStatusMap(status.connectors ?? {});
-            return;
-          }
-
-          const authorizeUrl = buildGoogleAuthorizeUrl(clientId, redirectUri);
-          window.open(authorizeUrl, "_blank");
-
-          const result = await listenerPromise;
-          if (result.error) {
-            setNotification(`Connection failed: ${result.error}`);
-            return;
-          }
-          if (!result.code) {
-            setNotification("Connection cancelled — no code returned");
-            return;
-          }
-
-          const exchangeRes = await fetch("/api/connectors/google/exchange", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              code: result.code,
-              redirect_uri: result.redirectUri,
-            }),
-          });
-          if (!exchangeRes.ok) {
-            setNotification(`Token exchange failed: ${exchangeRes.status}`);
-            return;
-          }
-          const body = (await exchangeRes.json()) as {
-            refresh_token?: string;
-          };
-          if (body.refresh_token) {
-            await keychainSet("google", "refresh_token", body.refresh_token);
-          }
+          await connectGoogleViaLoopback(clientId);
           setNotification("Successfully connected Google!");
           const status = await fetch("/api/connectors/status").then((r) =>
             r.json(),
@@ -313,10 +259,10 @@ function ConnectorsContent() {
       window.location.href = "/api/connectors/google/authorize";
       return;
     }
-    // Other providers are not yet implemented
-    setNotification(
-      `OAuth integration coming soon -- this will connect directly to ${connector.name} without any manual setup`
-    );
+
+    // Slack and Linear use manual token entry — handled by ManualTokenForm
+    // below. Clicking the OAuth button on those connectors opens the form.
+    setManualTokenProvider(connector.oauthProvider);
   }, []);
 
   const isProviderConnected = (provider: string): boolean => {
@@ -452,6 +398,139 @@ function ConnectorsContent() {
           })}
         </div>
       )}
+
+      {manualTokenProvider && (
+        <ManualTokenForm
+          provider={manualTokenProvider}
+          onCancel={() => setManualTokenProvider(null)}
+          onSubmit={handleManualTokenSubmit}
+        />
+      )}
+    </div>
+  );
+}
+
+interface ManualTokenFormProps {
+  provider: "slack" | "linear";
+  onCancel: () => void;
+  onSubmit: (
+    provider: "slack" | "linear",
+    token: string,
+    channelIds?: string,
+  ) => Promise<void>;
+}
+
+/**
+ * Modal form for entering Slack bot tokens or Linear API keys.
+ *
+ * Both providers are manual-token (no OAuth flow) so the form is just a
+ * couple of text fields. The submitted token is POSTed to
+ * /api/connectors/manual-token, which persists it into the local PGlite
+ * connector_tokens table; the renderer also mirrors it into the macOS
+ * Keychain via `keychainSet` for redundancy.
+ */
+function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps) {
+  const [token, setToken] = useState("");
+  const [channelIds, setChannelIds] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token.trim()) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(
+        provider,
+        token.trim(),
+        provider === "slack" ? channelIds.trim() || undefined : undefined,
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const labels: Record<typeof provider, { title: string; placeholder: string; help: string }> = {
+    slack: {
+      title: "Connect Slack",
+      placeholder: "xoxb-...",
+      help: "Create a Slack bot and paste its bot token. The token never leaves your Mac — it's stored in the macOS Keychain.",
+    },
+    linear: {
+      title: "Connect Linear",
+      placeholder: "lin_api_...",
+      help: "Generate a personal API key in Linear's settings and paste it here. The key is stored in the macOS Keychain.",
+    },
+  };
+  const labelInfo = labels[provider];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onCancel}
+    >
+      <motion.form
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={handleSubmit}
+        className="w-full max-w-md space-y-4 rounded-xl border bg-card p-6 shadow-warm-card"
+      >
+        <div>
+          <h3 className="font-display text-xl font-semibold">{labelInfo.title}</h3>
+          <p className="mt-1 text-sm text-muted-foreground">{labelInfo.help}</p>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium" htmlFor="token-input">
+            {provider === "slack" ? "Bot token" : "API key"}
+          </label>
+          <input
+            id="token-input"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder={labelInfo.placeholder}
+            className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            required
+          />
+        </div>
+
+        {provider === "slack" && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="channels-input">
+              Channel IDs (optional, comma-separated)
+            </label>
+            <input
+              id="channels-input"
+              type="text"
+              spellCheck={false}
+              value={channelIds}
+              onChange={(e) => setChannelIds(e.target.value)}
+              placeholder="C0123ABC,C0456DEF"
+              className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={submitting || !token.trim()}
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+          >
+            {submitting ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </motion.form>
     </div>
   );
 }

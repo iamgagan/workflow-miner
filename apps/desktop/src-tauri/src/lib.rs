@@ -67,7 +67,9 @@ pub fn run() {
             tokens::keychain_set,
             tokens::keychain_get,
             tokens::keychain_delete,
-            oauth::oauth_loopback_listen,
+            oauth::oauth_loopback_start,
+            oauth::oauth_loopback_wait,
+            oauth::oauth_loopback_cancel,
             commands::server_url,
             commands::open_data_dir,
         ])
