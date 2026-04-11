@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { listPatterns } from "@/lib/gbrain";
 import { MOCK_PATTERNS } from "@/lib/mock-patterns";
 
 export async function GET(request: Request) {
@@ -9,59 +9,13 @@ export async function GET(request: Request) {
   const maxScore = Number(searchParams.get("maxScore") ?? "100");
   const sort = searchParams.get("sort") ?? "score";
 
-  try {
-    const supabase = await createClient();
+  const brainPatterns = await listPatterns();
 
-    const { data: dbPatterns, error } = await supabase
-      .from("patterns")
-      .select("pattern_id, name, frequency, confidence, source_systems, metadata, updated_at")
-      .order("confidence", { ascending: false });
-
-    if (error || !dbPatterns || dbPatterns.length === 0) {
-      return NextResponse.json(applyFilters(MOCK_PATTERNS, source, minScore, maxScore, sort));
-    }
-
-    // Fetch all pattern_events for these patterns
-    const patternIds = dbPatterns.map((p) => p.pattern_id);
-    const { data: dbSteps } = await supabase
-      .from("pattern_events")
-      .select("pattern_id, event_type, position, source_system")
-      .in("pattern_id", patternIds)
-      .order("position", { ascending: true });
-
-    const stepsByPattern = new Map<string, typeof dbSteps>();
-    for (const step of dbSteps ?? []) {
-      const existing = stepsByPattern.get(step.pattern_id) ?? [];
-      existing.push(step);
-      stepsByPattern.set(step.pattern_id, existing);
-    }
-
-    const patterns = dbPatterns.map((p) => ({
-      id: p.pattern_id,
-      name: p.name,
-      steps: (stepsByPattern.get(p.pattern_id) ?? []).map((s) => ({
-        eventType: s.event_type,
-        position: s.position,
-        sourceSystem: s.source_system ?? "",
-      })),
-      compositeScore: Math.round((p.confidence ?? 0) * 100),
-      breakdown: {
-        frequency: 0,
-        consistency: 0,
-        completionRate: 0,
-        automationPotential: 0,
-        ...((p.metadata as Record<string, unknown>)?.breakdown as Record<string, number> ?? {}),
-      },
-      frequency: p.frequency ?? 0,
-      lastSeen: p.updated_at ?? new Date().toISOString(),
-      sources: (p.source_systems as string[]) ?? [],
-      evidence: [],
-    }));
-
-    return NextResponse.json(applyFilters(patterns, source, minScore, maxScore, sort));
-  } catch {
-    return NextResponse.json(applyFilters(MOCK_PATTERNS, source, minScore, maxScore, sort));
+  if (brainPatterns.length > 0) {
+    return NextResponse.json(applyFilters(brainPatterns, source, minScore, maxScore, sort));
   }
+
+  return NextResponse.json(applyFilters(MOCK_PATTERNS, source, minScore, maxScore, sort));
 }
 
 interface FilterablePattern {
