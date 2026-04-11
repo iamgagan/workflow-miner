@@ -38,7 +38,7 @@ export function ActivityChart() {
     >
       <Card>
         <CardHeader>
-          <CardTitle className="text-base font-semibold">Events Over Time</CardTitle>
+          <CardTitle className="font-display text-base font-semibold">Events Over Time</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="h-[300px]">

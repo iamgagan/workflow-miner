@@ -220,7 +220,9 @@ export default function ReplayPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Workflow Replay</h1>
+        <h1 className="font-display text-3xl font-bold tracking-tight">
+          Workflow Replay
+        </h1>
         <p className="text-muted-foreground">
           Step through captured workflow sequences to see how work moves across
           tools.
@@ -235,8 +237,8 @@ export default function ReplayPage() {
             onClick={() => handleSequenceChange(i)}
             className={`rounded-md border px-3 py-1.5 text-sm font-medium transition-colors ${
               i === selectedSequence
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card text-muted-foreground hover:text-foreground"
+                ? "border-accent bg-accent text-accent-foreground"
+                : "border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground"
             }`}
           >
             {seq.name}

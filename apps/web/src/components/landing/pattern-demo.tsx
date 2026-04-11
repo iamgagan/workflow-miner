@@ -13,15 +13,15 @@ const mockEvents = [
 ];
 
 const sourceColors: Record<string, string> = {
-  GitHub: "text-emerald-400",
-  Slack: "text-blue-400",
-  Calendar: "text-purple-400",
+  GitHub: "text-primary",
+  Slack: "text-accent",
+  Calendar: "text-primary",
 };
 
 const sourceBg: Record<string, string> = {
-  GitHub: "bg-emerald-400/10",
-  Slack: "bg-blue-400/10",
-  Calendar: "bg-purple-400/10",
+  GitHub: "bg-primary/10",
+  Slack: "bg-accent/10",
+  Calendar: "bg-primary/10",
 };
 
 export function PatternDemo() {
@@ -48,16 +48,16 @@ export function PatternDemo() {
   }, [patternFound]);
 
   return (
-    <section className="relative py-24 sm:py-32">
+    <section className="relative py-28 sm:py-36">
       <div className="mx-auto max-w-6xl px-4">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
           transition={{ duration: 0.5 }}
           className="text-center"
         >
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          <h2 className="font-display text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
             Watch patterns emerge
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
@@ -67,19 +67,19 @@ export function PatternDemo() {
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 30 }}
+          initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-60px" }}
           transition={{ duration: 0.6, delay: 0.2 }}
-          className="relative mx-auto mt-16 max-w-2xl overflow-hidden rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm"
+          className="relative mx-auto mt-16 max-w-2xl overflow-hidden rounded-2xl border border-border bg-card shadow-warm-card"
         >
           {/* Header bar */}
-          <div className="flex items-center gap-2 border-b border-border/50 px-5 py-3">
-            <div className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
-            <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
-            <div className="h-2.5 w-2.5 rounded-full bg-green-400/70" />
+          <div className="flex items-center gap-2 border-b border-border px-5 py-3">
+            <div className="h-2.5 w-2.5 rounded-full bg-accent/60" />
+            <div className="h-2.5 w-2.5 rounded-full bg-primary/40" />
+            <div className="h-2.5 w-2.5 rounded-full bg-primary/60" />
             <span className="ml-3 text-xs text-muted-foreground">
-              workflow-miner — live feed
+              workflow-miner &mdash; live feed
             </span>
           </div>
 
@@ -118,11 +118,11 @@ export function PatternDemo() {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.4 }}
-                  className="mt-4 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4"
+                  className="mt-4 rounded-xl border border-accent/30 bg-accent/10 p-4"
                 >
                   <div className="flex items-center gap-2">
-                    <div className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-                    <span className="text-sm font-medium text-emerald-400">
+                    <div className="h-2 w-2 animate-pulse rounded-full bg-accent" />
+                    <span className="text-sm font-medium text-accent">
                       Pattern discovered
                     </span>
                   </div>

@@ -53,11 +53,11 @@ export function StatCard({ title, value, suffix, icon: Icon, description, index 
   return (
     <motion.div
       ref={ref}
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: index * 0.1, ease: "easeOut" }}
     >
-      <Card className="relative overflow-hidden">
+      <Card className="relative overflow-hidden shadow-warm-card">
         <CardContent className="p-6">
           <div className="flex items-center justify-between">
             <div className="space-y-1">
@@ -67,11 +67,11 @@ export function StatCard({ title, value, suffix, icon: Icon, description, index 
                 {suffix && <span className="text-lg font-normal text-muted-foreground">{suffix}</span>}
               </p>
             </div>
-            <div className="rounded-lg bg-primary/10 p-3">
+            <div className="rounded-xl bg-primary/10 p-3">
               <Icon className="h-5 w-5 text-primary" />
             </div>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">{description}</p>
+          <p className="mt-3 text-xs text-muted-foreground">{description}</p>
         </CardContent>
       </Card>
     </motion.div>

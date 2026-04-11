@@ -55,7 +55,7 @@ export default function PatternsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Patterns</h1>
+        <h1 className="font-display text-3xl font-bold tracking-tight">Patterns</h1>
         <p className="text-sm text-muted-foreground">
           Recurring workflow patterns detected across your tools
         </p>

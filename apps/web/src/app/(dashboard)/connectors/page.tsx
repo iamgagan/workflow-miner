@@ -114,7 +114,7 @@ function CopyButton({ text }: { text: string }) {
       className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       title="Copy to clipboard"
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
   );
 }
@@ -142,11 +142,11 @@ function SetupDialog({
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border bg-card p-6 shadow-xl"
+        className="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border bg-card p-6 shadow-warm-card"
       >
         <button
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
         >
           <X className="h-4 w-4" />
         </button>
@@ -161,7 +161,7 @@ function SetupDialog({
             </span>
           </div>
           <div>
-            <h2 className="text-lg font-bold">Configure {connector.name}</h2>
+            <h2 className="text-lg font-display font-bold">Configure {connector.name}</h2>
             <p className="text-sm text-muted-foreground">{connector.description}</p>
           </div>
         </div>
@@ -196,8 +196,7 @@ function SetupDialog({
                     href={step.link}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium transition-colors hover:underline"
-                    style={{ color: connector.color }}
+                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-accent transition-colors hover:underline"
                   >
                     Open <ExternalLink className="h-3 w-3" />
                   </a>
@@ -218,7 +217,7 @@ function SetupDialog({
         <div className="mt-6 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-accent"
+            className="rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-secondary"
           >
             Close
           </button>
@@ -234,7 +233,7 @@ export default function ConnectorsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Connectors</h1>
+        <h1 className="font-display text-3xl font-bold tracking-tight">Connectors</h1>
         <p className="text-muted-foreground">
           Manage your data source integrations
         </p>
@@ -251,7 +250,7 @@ export default function ConnectorsPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: index * 0.1 }}
-              className="rounded-xl border bg-card p-6"
+              className="rounded-xl border bg-card p-6 shadow-warm-card"
             >
               <div className="flex items-start gap-4">
                 <div
@@ -266,11 +265,11 @@ export default function ConnectorsPage() {
                   <div className="flex items-center gap-2">
                     <h3 className="font-bold">{connector.name}</h3>
                     {isConnected ? (
-                      <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                      <span className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
                         Connected
                       </span>
                     ) : (
-                      <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                      <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
                         Not Configured
                       </span>
                     )}
@@ -285,7 +284,7 @@ export default function ConnectorsPage() {
                         <p>Last synced: {connector.lastSync}</p>
                         <p>{connector.events} events</p>
                       </div>
-                      <button className="inline-flex items-center gap-1.5 rounded-lg border bg-background px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+                      <button className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">
                         <RefreshCw className="h-3.5 w-3.5" />
                         Sync Now
                       </button>
@@ -297,7 +296,7 @@ export default function ConnectorsPage() {
                       </p>
                       <button
                         onClick={() => setConfiguring(connector)}
-                        className="mt-3 inline-flex items-center rounded-lg border bg-background px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+                        className="mt-3 inline-flex items-center rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent/90"
                       >
                         Configure
                       </button>

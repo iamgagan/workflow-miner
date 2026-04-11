@@ -21,9 +21,9 @@ export default function SettingsPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-6">
       <div className="flex items-center gap-3">
-        <Settings className="h-8 w-8 text-muted-foreground" />
+        <Settings className="h-8 w-8 text-primary" />
         <div>
-          <h1 className="text-2xl font-bold">Settings</h1>
+          <h1 className="font-display text-3xl font-bold">Settings</h1>
           <p className="text-sm text-muted-foreground">
             Manage notifications and preferences
           </p>
@@ -32,10 +32,10 @@ export default function SettingsPage() {
 
       <NotificationPermission />
 
-      <Card>
+      <Card className="shadow-warm-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
+            <Clock className="h-5 w-5 text-primary" />
             Quiet Hours
           </CardTitle>
           <CardDescription>

@@ -36,22 +36,22 @@ const container = {
 };
 
 const item = {
-  hidden: { opacity: 0, y: 30 },
+  hidden: { opacity: 0, y: 20 },
   show: { opacity: 1, y: 0, transition: { duration: 0.5 } },
 };
 
 export function Features() {
   return (
-    <section id="how-it-works" className="relative py-24 sm:py-32">
+    <section id="how-it-works" className="relative py-28 sm:py-36">
       <div className="mx-auto max-w-6xl px-4">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: "-100px" }}
           transition={{ duration: 0.5 }}
           className="text-center"
         >
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
+          <h2 className="font-display text-3xl font-bold tracking-tight sm:text-4xl lg:text-5xl">
             How it works
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-muted-foreground">
@@ -64,22 +64,22 @@ export function Features() {
           initial="hidden"
           whileInView="show"
           viewport={{ once: true, margin: "-80px" }}
-          className="mt-16 grid gap-8 md:grid-cols-3"
+          className="mt-20 grid gap-8 md:grid-cols-3"
         >
           {features.map((f) => (
             <motion.div
               key={f.title}
               variants={item}
-              className="group relative rounded-2xl border border-border/50 bg-card/50 p-8 backdrop-blur-sm transition-colors hover:border-border"
+              className="group relative rounded-2xl border border-border/50 bg-card p-8 shadow-warm-card transition-all hover:shadow-lg hover:border-border"
             >
-              <span className="absolute right-6 top-6 text-5xl font-bold text-muted/50">
+              <span className="absolute right-6 top-6 font-display text-5xl font-bold text-accent/20">
                 {f.step}
               </span>
               <div className="mb-4 inline-flex rounded-xl bg-primary/10 p-3 text-primary">
                 {f.icon}
               </div>
               <h3 className="text-xl font-semibold">{f.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 {f.description}
               </p>
             </motion.div>
