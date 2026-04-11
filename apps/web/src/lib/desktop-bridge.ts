@@ -166,6 +166,17 @@ const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
 ].join(" ");
 
+export interface ConnectGoogleOptions {
+  timeoutSecs?: number;
+  /**
+   * Called immediately after the loopback listener is bound, with the
+   * handle. The caller can stash the id to support cancellation via
+   * `oauthLoopbackCancel(handle.id)` if the user navigates away or hits
+   * Escape before the OAuth round-trip completes.
+   */
+  onStart?: (handle: LoopbackHandle) => void;
+}
+
 /**
  * End-to-end Google OAuth flow for the desktop app.
  *
@@ -179,11 +190,11 @@ const GOOGLE_SCOPES = [
  *   6. Mirror the refresh token into the macOS Keychain.
  *
  * No race because of the two-step API: the listener is bound before the
- * browser ever opens.
+ * browser ever opens. Cancellable mid-flight via `onStart` + `oauthLoopbackCancel`.
  */
 export async function connectGoogleViaLoopback(
   clientId: string,
-  options: { timeoutSecs?: number } = {},
+  options: ConnectGoogleOptions = {},
 ): Promise<{ refreshToken: string | null }> {
   if (!isTauri()) {
     throw new Error("connectGoogleViaLoopback requires the Tauri shell");
@@ -194,6 +205,7 @@ export async function connectGoogleViaLoopback(
 
   // 1. Bind the loopback listener — returns synchronously with the URI.
   const handle = await oauthLoopbackStart();
+  options.onStart?.(handle);
 
   // 2 + 3. Build the authorize URL and open it in the system browser.
   const authorizeUrl = buildGoogleAuthorizeUrl(clientId, handle.redirectUri);

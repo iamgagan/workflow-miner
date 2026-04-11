@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { SkillCard } from "@/components/skills/skill-card";
 import { SkillDetail } from "@/components/skills/skill-detail";
@@ -22,11 +22,29 @@ const FILTER_OPTIONS: readonly (SkillStatus | "all")[] = [
   "exported",
 ] as const;
 
-const skills: SkillData[] = [];
-
 export default function SkillsPage() {
+  const [skills, setSkills] = useState<SkillData[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedSkill, setSelectedSkill] = useState<SkillData | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/skills")
+      .then((res) => res.json())
+      .then((data: { skills: SkillData[] }) => {
+        if (!cancelled) setSkills(data.skills ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSkills([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredSkills = statusFilter
     ? skills.filter((s) => s.status === statusFilter)
@@ -80,12 +98,19 @@ export default function SkillsPage() {
         })}
       </div>
 
-      {!hasData && (
+      {loading && (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
+      {!loading && !hasData && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <Sparkles className="h-12 w-12 text-muted-foreground/30" />
           <h2 className="font-display text-xl font-semibold mt-4">No skills generated yet</h2>
           <p className="text-sm text-muted-foreground max-w-md mt-2">
-            Skills are automatically created from your detected patterns
+            Skills are automatically created from your detected patterns. Mine
+            patterns first, then come back here to download skill packs.
           </p>
           <Link
             href="/patterns"

@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle, Copy, Download, ExternalLink, Shield, XCircle, Zap } from "lucide-react";
+import { Copy, Download, ExternalLink, Shield, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -156,32 +156,17 @@ export function SkillDetail({ skill, open, onOpenChange }: SkillDetailProps) {
           </div>
         </ScrollArea>
 
-        {/* Footer Actions */}
+        {/* Footer Actions — Download and Copy are always available so users
+            can grab the YAML for any pattern regardless of review status. */}
         <div className="flex items-center gap-2 border-t border-border/50 px-6 py-4">
-          {skill.status === "pending_review" && (
-            <>
-              <Button size="sm" className="gap-1.5">
-                <CheckCircle className="h-3.5 w-3.5" />
-                Approve
-              </Button>
-              <Button size="sm" variant="destructive" className="gap-1.5">
-                <XCircle className="h-3.5 w-3.5" />
-                Reject
-              </Button>
-            </>
-          )}
-          {(skill.status === "approved" || skill.status === "exported") && (
-            <>
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleDownload}>
-                <Download className="h-3.5 w-3.5" />
-                Download .yaml
-              </Button>
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCopyYaml}>
-                <Copy className="h-3.5 w-3.5" />
-                Copy YAML
-              </Button>
-            </>
-          )}
+          <Button size="sm" className="gap-1.5" onClick={handleDownload}>
+            <Download className="h-3.5 w-3.5" />
+            Download .yaml
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCopyYaml}>
+            <Copy className="h-3.5 w-3.5" />
+            Copy YAML
+          </Button>
           <div className="flex-1" />
           <span className="text-[10px] text-muted-foreground">
             ID: {skill.id}

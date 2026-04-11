@@ -6,7 +6,6 @@ import { Mail, MessageSquare, CheckCircle2, Calendar, Wifi, WifiOff, Loader2 } f
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { type LucideIcon } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 
 interface Source {
   name: string;
@@ -15,6 +14,15 @@ interface Source {
   connected: boolean;
   lastSync: string | null;
   eventCount: number;
+}
+
+interface SourcesApiResponse {
+  sources: Array<{
+    key: string;
+    connected: boolean;
+    lastSync: string | null;
+    eventCount: number;
+  }>;
 }
 
 const SOURCE_DEFS: Array<{ name: string; key: string; icon: LucideIcon }> = [
@@ -48,60 +56,41 @@ export function SourceStatus() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     async function fetchStatus() {
       try {
-        const supabase = createClient();
+        const res = await fetch("/api/sources");
+        if (!res.ok) return;
+        const data = (await res.json()) as SourcesApiResponse;
+        if (cancelled) return;
 
-        // Check connector_tokens for connected sources
-        const { data: tokens } = await supabase
-          .from("connector_tokens")
-          .select("provider, updated_at");
-
-        const connectedProviders = new Map<string, string>();
-        for (const t of tokens ?? []) {
-          // Map 'google' provider to both gmail and calendar
-          if (t.provider === "google") {
-            connectedProviders.set("gmail", t.updated_at);
-            connectedProviders.set("calendar", t.updated_at);
-          } else {
-            connectedProviders.set(t.provider, t.updated_at);
-          }
-        }
-
-        // Count events per source from brain_timeline
-        const { data: timeline } = await supabase
-          .from("brain_timeline")
-          .select("source")
-          .limit(5000);
-
-        const eventCounts = new Map<string, number>();
-        for (const entry of timeline ?? []) {
-          if (entry.source) {
-            eventCounts.set(
-              entry.source,
-              (eventCounts.get(entry.source) ?? 0) + 1,
-            );
-          }
+        const lookup = new Map<string, SourcesApiResponse["sources"][number]>();
+        for (const s of data.sources) {
+          lookup.set(s.key, s);
         }
 
         setSources(
-          SOURCE_DEFS.map((def) => ({
-            ...def,
-            connected: connectedProviders.has(def.key) || eventCounts.has(def.key),
-            lastSync: connectedProviders.get(def.key)
-              ? relativeTime(connectedProviders.get(def.key)!)
-              : null,
-            eventCount: eventCounts.get(def.key) ?? 0,
-          })),
+          SOURCE_DEFS.map((def) => {
+            const status = lookup.get(def.key);
+            return {
+              ...def,
+              connected: status?.connected ?? false,
+              lastSync: status?.lastSync ? relativeTime(status.lastSync) : null,
+              eventCount: status?.eventCount ?? 0,
+            };
+          }),
         );
       } catch {
         // Keep defaults on error
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
 
     fetchStatus();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (

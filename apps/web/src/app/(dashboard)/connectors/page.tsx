@@ -2,12 +2,13 @@
 
 import { Suspense, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { Mail, Calendar, MessageSquare, GitBranch, RefreshCw } from "lucide-react";
+import { Mail, Calendar, MessageSquare, GitBranch, RefreshCw, Plug } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ComponentType } from "react";
 import {
   isTauri,
   connectGoogleViaLoopback,
+  oauthLoopbackCancel,
   keychainSet,
 } from "@/lib/desktop-bridge";
 
@@ -138,6 +139,34 @@ function ConnectorsContent() {
   const [manualTokenProvider, setManualTokenProvider] = useState<
     "slack" | "linear" | null
   >(null);
+  // Tracks the id of an in-flight Google OAuth loopback listener so we can
+  // cancel it when the user navigates away or hits Escape.
+  const [pendingOauthId, setPendingOauthId] = useState<number | null>(null);
+
+  // Cancel any in-flight OAuth listener when the page unmounts (e.g. user
+  // navigates to /dashboard mid-flow). The Tauri shell would otherwise hold
+  // the loopback port open until the 5-minute timeout.
+  useEffect(() => {
+    return () => {
+      if (pendingOauthId !== null) {
+        void oauthLoopbackCancel(pendingOauthId).catch(() => {});
+      }
+    };
+  }, [pendingOauthId]);
+
+  // Cancel an in-flight OAuth flow when the user presses Escape.
+  useEffect(() => {
+    if (pendingOauthId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        void oauthLoopbackCancel(pendingOauthId).catch(() => {});
+        setPendingOauthId(null);
+        setNotification("Cancelled");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingOauthId]);
 
   const handleManualTokenSubmit = useCallback(
     async (provider: "slack" | "linear", token: string, channelIds?: string) => {
@@ -240,7 +269,10 @@ function ConnectorsContent() {
           return;
         }
         try {
-          await connectGoogleViaLoopback(clientId);
+          setNotification("Waiting for Google authorization in your browser…");
+          await connectGoogleViaLoopback(clientId, {
+            onStart: (handle) => setPendingOauthId(handle.id),
+          });
           setNotification("Successfully connected Google!");
           const status = await fetch("/api/connectors/status").then((r) =>
             r.json(),
@@ -251,6 +283,8 @@ function ConnectorsContent() {
           setNotification(
             err instanceof Error ? err.message : "Connection failed",
           );
+        } finally {
+          setPendingOauthId(null);
         }
         return;
       }
@@ -264,6 +298,49 @@ function ConnectorsContent() {
     // below. Clicking the OAuth button on those connectors opens the form.
     setManualTokenProvider(connector.oauthProvider);
   }, []);
+
+  const handleDisconnect = useCallback(
+    async (connector: ConnectorData) => {
+      const provider = connector.oauthProvider;
+      const ok = window.confirm(
+        `Disconnect ${connector.name}? Future syncs will be skipped until you reconnect. Existing events stay in your local brain.`,
+      );
+      if (!ok) return;
+
+      try {
+        if (provider === "google") {
+          // Hosted mode doesn't have a delete endpoint for the google row
+          // (the schema has access_token NOT NULL on the hosted side). In
+          // desktop mode the local shim is permissive — we soft-disconnect
+          // by upserting an empty row through the manual-token DELETE
+          // route, which clears the canonical tokens blob.
+          const res = await fetch(
+            "/api/connectors/manual-token?provider=google",
+            { method: "DELETE" },
+          );
+          if (!res.ok) throw new Error(await res.text());
+        } else {
+          // Slack / Linear go through the same endpoint.
+          const res = await fetch(
+            `/api/connectors/manual-token?provider=${provider}`,
+            { method: "DELETE" },
+          );
+          if (!res.ok) throw new Error(await res.text());
+        }
+        setNotification(`Disconnected ${connector.name}`);
+        const status = await fetch("/api/connectors/status").then((r) =>
+          r.json(),
+        );
+        setStatusMap(status.connectors ?? {});
+      } catch (err) {
+        console.error("disconnect failed", err);
+        setNotification(
+          err instanceof Error ? err.message : "Disconnect failed",
+        );
+      }
+    },
+    [],
+  );
 
   const isProviderConnected = (provider: string): boolean => {
     return statusMap[provider]?.connected === true;
@@ -343,20 +420,30 @@ function ConnectorsContent() {
                     </p>
 
                     {isConnected ? (
-                      <div className="mt-4 flex items-center justify-between">
-                        <div className="space-y-1 text-sm text-muted-foreground">
-                          {lastSync && <p>Last synced: {lastSync}</p>}
+                      <div className="mt-4 flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1 space-y-1 text-sm text-muted-foreground">
+                          {lastSync && <p className="truncate">Last synced: {lastSync}</p>}
                         </div>
-                        <button
-                          onClick={() => handleSync(connector.name)}
-                          disabled={isSyncing}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-70"
-                        >
-                          <RefreshCw
-                            className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`}
-                          />
-                          {isSyncing ? "Syncing..." : "Sync Now"}
-                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            onClick={() => handleDisconnect(connector)}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                            title={`Disconnect ${connector.name}`}
+                          >
+                            <Plug className="h-3.5 w-3.5" />
+                            Disconnect
+                          </button>
+                          <button
+                            onClick={() => handleSync(connector.name)}
+                            disabled={isSyncing}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-70"
+                          >
+                            <RefreshCw
+                              className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`}
+                            />
+                            {isSyncing ? "Syncing..." : "Sync Now"}
+                          </button>
+                        </div>
                       </div>
                     ) : (
                       <div className="mt-4">

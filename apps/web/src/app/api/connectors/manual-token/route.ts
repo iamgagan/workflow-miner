@@ -101,13 +101,18 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * DELETE /api/connectors/manual-token?provider=slack
+ * DELETE /api/connectors/manual-token?provider={slack|linear|google}
  *
- * Disconnect a manual-token connector by removing its row.
+ * Soft-disconnect a connector by clearing its credentials. The row stays
+ * (so historical metadata is preserved), but the access_token / tokens
+ * fields are blanked so the next sync skips it. Google is allowed here too
+ * even though its happy-path is OAuth — disconnecting drops the same row.
  */
+const DELETABLE_PROVIDERS = ["slack", "linear", "google"] as const;
+
 export async function DELETE(request: NextRequest) {
   const provider = new URL(request.url).searchParams.get("provider");
-  if (!provider || !VALID_PROVIDERS.includes(provider as ManualTokenRequest["provider"])) {
+  if (!provider || !DELETABLE_PROVIDERS.includes(provider as (typeof DELETABLE_PROVIDERS)[number])) {
     return NextResponse.json({ error: "invalid_provider" }, { status: 400 });
   }
 
