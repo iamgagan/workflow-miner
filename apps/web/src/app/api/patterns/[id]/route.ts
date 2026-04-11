@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getPattern } from "@/lib/gbrain";
-import { getPatternById } from "@/lib/mock-patterns";
 
 export async function GET(
   _request: Request,
@@ -10,14 +9,9 @@ export async function GET(
 
   const pattern = await getPattern(id);
 
-  if (pattern) {
-    return NextResponse.json(pattern);
-  }
-
-  // Fall back to mock data if gbrain has no data for this slug
-  const mock = getPatternById(id);
-  if (!mock) {
+  if (!pattern) {
     return NextResponse.json({ error: "Pattern not found" }, { status: 404 });
   }
-  return NextResponse.json(mock);
+
+  return NextResponse.json(pattern);
 }

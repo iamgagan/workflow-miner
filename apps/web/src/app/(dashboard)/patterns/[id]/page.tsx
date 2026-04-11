@@ -1,10 +1,10 @@
 "use client";
 
-import { use } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowLeft, Clock, Hash, Layers } from "lucide-react";
+import { ArrowLeft, Clock, Hash, Layers, Loader2, Inbox } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,18 +12,92 @@ import { ScoreBadge } from "@/components/patterns/score-badge";
 import { WorkflowGraph } from "@/components/patterns/workflow-graph";
 import { ScoreRadar } from "@/components/patterns/score-radar";
 import { EvidencePanel } from "@/components/patterns/evidence-panel";
-import { getPatternById, SOURCE_COLORS } from "@/lib/mock-patterns";
+
+const SOURCE_COLORS: Record<string, string> = {
+  slack: "bg-purple-500/10 text-purple-600 border-purple-500/20",
+  gmail: "bg-red-500/10 text-red-600 border-red-500/20",
+  linear: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  calendar: "bg-green-500/10 text-green-600 border-green-500/20",
+};
+
+interface PatternDetail {
+  id: string;
+  name: string;
+  steps: Array<{ eventType: string; position: number; sourceSystem: string }>;
+  compositeScore: number;
+  breakdown: {
+    frequency: number;
+    consistency: number;
+    completionRate: number;
+    automationPotential: number;
+  };
+  frequency: number;
+  lastSeen: string;
+  sources: string[];
+  evidence: Array<Record<string, unknown>>;
+}
 
 export default function PatternDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = use(params);
-  const pattern = getPatternById(id);
+  const routeParams = useParams();
+  const id = routeParams.id as string;
+  const [pattern, setPattern] = useState<PatternDetail | null>(null);
+  const [evidence, setEvidence] = useState<Array<{ id: string; type: string; source: string; timestamp: string; summary: string; actor: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
 
-  if (!pattern) {
-    notFound();
+  useEffect(() => {
+    Promise.all([
+      fetch(`/api/patterns/${id}`).then((r) =>
+        r.ok ? r.json() : null,
+      ),
+      fetch(`/api/patterns/${id}/evidence`).then((r) =>
+        r.ok ? r.json() : [],
+      ),
+    ])
+      .then(([patternData, evidenceData]) => {
+        if (!patternData || patternData.error) {
+          setNotFound(true);
+        } else {
+          setPattern(patternData);
+          setEvidence(Array.isArray(evidenceData) ? evidenceData : []);
+        }
+      })
+      .catch(() => {
+        setNotFound(true);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (notFound || !pattern) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Layers className="h-12 w-12 text-muted-foreground/30" />
+        <h2 className="mt-4 font-display text-xl font-semibold">Pattern not found</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This pattern may have been removed or hasn&apos;t been detected yet.
+        </p>
+        <Link href="/patterns" className="mt-4">
+          <Button variant="outline">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Patterns
+          </Button>
+        </Link>
+      </div>
+    );
   }
 
   return (
@@ -147,7 +221,7 @@ export default function PatternDetailPage({
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.4 }}
         >
-          <EvidencePanel events={pattern.evidence} />
+          <EvidencePanel events={evidence} />
         </motion.div>
       </div>
     </div>

@@ -8,7 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { PatternCard } from "@/components/patterns/pattern-card";
-import { SOURCE_COLORS } from "@/lib/mock-patterns";
+const SOURCE_COLORS: Record<string, string> = {
+  slack: "bg-purple-500/10 text-purple-600 border-purple-500/20",
+  gmail: "bg-red-500/10 text-red-600 border-red-500/20",
+  linear: "bg-blue-500/10 text-blue-600 border-blue-500/20",
+  calendar: "bg-green-500/10 text-green-600 border-green-500/20",
+};
 import { cn } from "@/lib/utils";
 
 const ALL_SOURCES = ["slack", "gmail", "linear", "calendar"] as const;
