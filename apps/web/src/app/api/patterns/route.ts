@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { listPatterns } from "@/lib/gbrain";
-import { MOCK_PATTERNS } from "@/lib/mock-patterns";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -10,12 +9,7 @@ export async function GET(request: Request) {
   const sort = searchParams.get("sort") ?? "score";
 
   const brainPatterns = await listPatterns();
-
-  if (brainPatterns.length > 0) {
-    return NextResponse.json(applyFilters(brainPatterns, source, minScore, maxScore, sort));
-  }
-
-  return NextResponse.json(applyFilters(MOCK_PATTERNS, source, minScore, maxScore, sort));
+  return NextResponse.json(applyFilters(brainPatterns, source, minScore, maxScore, sort));
 }
 
 interface FilterablePattern {

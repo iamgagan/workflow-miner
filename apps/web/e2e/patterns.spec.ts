@@ -9,7 +9,7 @@ test.describe("Patterns page", () => {
   test("shows pattern cards or empty state", async ({ page }) => {
     await page.goto("/patterns", { waitUntil: "networkidle" });
     const emptyState = page.getByText("No patterns detected yet");
-    const heading = page.getByRole("heading", { name: "Patterns" });
+    const heading = page.getByRole("heading", { name: "Patterns", exact: true });
     await expect(heading).toBeVisible();
     // Either we see the empty state or pattern content
     const hasEmptyState = await emptyState.isVisible();
