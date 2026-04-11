@@ -31,7 +31,7 @@ export function ReplayControls({
   onStepForward,
 }: ReplayControlsProps) {
   return (
-    <div className="flex items-center justify-between rounded-lg border bg-card p-3">
+    <div className="flex items-center justify-between rounded-lg border bg-card p-3 shadow-warm-card">
       <div className="flex items-center gap-1">
         <Button
           variant="ghost"
@@ -67,7 +67,10 @@ export function ReplayControls({
           <Badge
             key={s}
             variant={speed === s ? "default" : "secondary"}
-            className={cn("cursor-pointer select-none")}
+            className={cn(
+              "cursor-pointer select-none",
+              speed === s && "bg-accent text-accent-foreground",
+            )}
             onClick={() => onSpeedChange(s)}
           >
             {s}x

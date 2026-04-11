@@ -28,3 +28,4 @@ Thumbs.db
 *.log
 npm-debug.log*
 workflow-miner.db
+.vercel

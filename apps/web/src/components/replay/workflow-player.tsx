@@ -4,10 +4,10 @@ import { motion } from "framer-motion";
 import type { ReplayEvent } from "./event-card";
 
 const SOURCE_COLORS: Record<ReplayEvent["source"], string> = {
-  gmail: "#ef4444",
-  slack: "#a855f7",
-  calendar: "#22c55e",
-  linear: "#3b82f6",
+  gmail: "#dc6b5a",
+  slack: "#9b7abf",
+  calendar: "#5a9b6b",
+  linear: "#6b7ec4",
 };
 
 interface WorkflowPlayerProps {
@@ -29,7 +29,7 @@ export function WorkflowPlayer({
   const cy = svgHeight / 2;
 
   return (
-    <div className="w-full overflow-x-auto rounded-lg border bg-card p-4">
+    <div className="w-full overflow-x-auto rounded-lg border bg-card p-4 shadow-warm-card">
       <svg
         width={svgWidth}
         height={svgHeight}
@@ -78,7 +78,7 @@ export function WorkflowPlayer({
                   cy={cy}
                   r={nodeRadius + 6}
                   fill="none"
-                  stroke={color}
+                  stroke="hsl(var(--accent))"
                   strokeWidth={2}
                   initial={{ opacity: 0, r: nodeRadius }}
                   animate={{

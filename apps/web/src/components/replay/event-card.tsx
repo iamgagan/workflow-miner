@@ -19,14 +19,14 @@ const SOURCE_CONFIG: Record<
   ReplayEvent["source"],
   { color: string; bg: string; label: string }
 > = {
-  gmail: { color: "text-red-500", bg: "bg-red-500/10", label: "Gmail" },
-  slack: { color: "text-purple-500", bg: "bg-purple-500/10", label: "Slack" },
+  gmail: { color: "text-red-400", bg: "bg-red-500/10", label: "Gmail" },
+  slack: { color: "text-purple-400", bg: "bg-purple-500/10", label: "Slack" },
   calendar: {
-    color: "text-green-500",
-    bg: "bg-green-500/10",
+    color: "text-primary",
+    bg: "bg-primary/10",
     label: "Calendar",
   },
-  linear: { color: "text-blue-500", bg: "bg-blue-500/10", label: "Linear" },
+  linear: { color: "text-indigo-400", bg: "bg-indigo-500/10", label: "Linear" },
 };
 
 interface EventCardProps {
@@ -54,8 +54,8 @@ export function EventCard({
     >
       <Card
         className={cn(
-          "cursor-pointer transition-shadow",
-          isActive && "ring-2 ring-primary"
+          "cursor-pointer shadow-warm-card transition-shadow",
+          isActive && "ring-2 ring-accent",
         )}
         onClick={onToggle}
       >
@@ -77,7 +77,7 @@ export function EventCard({
               <ChevronDown
                 className={cn(
                   "h-4 w-4 text-muted-foreground transition-transform",
-                  isExpanded && "rotate-180"
+                  isExpanded && "rotate-180",
                 )}
               />
             </div>
@@ -92,7 +92,7 @@ export function EventCard({
                 transition={{ duration: 0.2 }}
                 className="overflow-hidden"
               >
-                <p className="mt-3 text-sm border-t pt-3 text-muted-foreground">
+                <p className="mt-3 border-t pt-3 text-sm text-muted-foreground">
                   {event.detail}
                 </p>
               </motion.div>

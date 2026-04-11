@@ -335,10 +335,10 @@ export function getSkillById(id: string): SkillData | undefined {
 }
 
 export const STATUS_COLORS: Record<SkillStatus, string> = {
-  draft: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
-  pending_review: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-  approved: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  exported: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+  draft: "bg-muted text-muted-foreground border-border",
+  pending_review: "bg-amber-500/15 text-amber-500 border-amber-500/30",
+  approved: "bg-primary/15 text-primary border-primary/30",
+  exported: "bg-accent/15 text-accent border-accent/30",
 };
 
 export const STATUS_LABELS: Record<SkillStatus, string> = {

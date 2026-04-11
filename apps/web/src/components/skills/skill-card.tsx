@@ -23,7 +23,7 @@ export function SkillCard({ skill, index, onClick }: SkillCardProps) {
       transition={{ duration: 0.25, delay: index * 0.05 }}
     >
       <button onClick={onClick} className="w-full text-left">
-        <Card className="group cursor-pointer border-border/50 bg-card/50 backdrop-blur transition-colors hover:border-border hover:bg-card/80">
+        <Card className="group cursor-pointer border-border/50 bg-card/80 shadow-warm-card backdrop-blur transition-colors hover:border-border hover:bg-card">
           <CardHeader className="flex flex-row items-start gap-3 space-y-0 pb-3">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
