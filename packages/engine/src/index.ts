@@ -22,16 +22,44 @@ export type {
 } from "./mining/types.js";
 
 // Normalize
+export { Normalizer } from "./normalize/normalizer.js";
+export type { NormalizeResult, NormalizeError } from "./normalize/normalizer.js";
 export { EventType, EntityType } from "./normalize/schema.js";
 export type { Entity, NormalizedEvent } from "./normalize/schema.js";
 
+// Brain
+export { IngestWriter } from "./brain/ingest-writer.js";
+export type { WriteResult } from "./brain/ingest-writer.js";
+export { BrainClient } from "./brain/client.js";
+export type {
+  BrainPage,
+  BrainLink,
+  BrainStats,
+  TimelineEntry,
+  PageType,
+} from "./brain/types.js";
+
 // Connectors
+export {
+  GmailConnector,
+  SlackConnector,
+  LinearConnector,
+  CalendarConnector,
+} from "./connectors/index.js";
 export type {
   RawEvent,
   RawParticipant,
   ConnectorConfig,
   ConnectorInterface,
 } from "./connectors/types.js";
+
+// Pipeline
+export { runIngest } from "./pipeline/ingest.js";
+export type {
+  IngestOptions,
+  IngestResult,
+  IngestDependencies,
+} from "./pipeline/ingest.js";
 
 // Config
 export type {

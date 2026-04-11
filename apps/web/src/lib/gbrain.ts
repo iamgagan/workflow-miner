@@ -143,23 +143,38 @@ export async function listPatterns(limit = 20): Promise<
       const breakdown = (frontmatter.breakdown ?? {}) as Record<string, number>;
       const confidence = typeof frontmatter.confidence === "number" ? frontmatter.confidence : 0.5;
 
+      // Prefer steps stored in frontmatter (from PatternMiner) over link-derived steps
+      const frontmatterSteps = Array.isArray(frontmatter.steps)
+        ? (frontmatter.steps as Array<{ eventType: string; position: number; sourceSystem: string | null }>).map(
+            (s) => ({
+              eventType: s.eventType,
+              position: s.position,
+              sourceSystem: s.sourceSystem ?? "",
+            }),
+          )
+        : null;
+
+      const linkSteps = (linksBySlug.get(page.slug) ?? []).map((link, pos) => ({
+        eventType: link.link_type,
+        position: pos,
+        sourceSystem: link.to_slug,
+      }));
+
+      const support = typeof frontmatter.support === "number" ? frontmatter.support : 0;
+
       return {
         id: page.slug,
         name: page.title,
-        steps: (linksBySlug.get(page.slug) ?? []).map((link, pos) => ({
-          eventType: link.link_type,
-          position: pos,
-          sourceSystem: link.to_slug,
-        })),
+        steps: frontmatterSteps ?? linkSteps,
         compositeScore: Math.round(confidence * 100),
         breakdown: {
-          frequency: 0,
+          frequency: support,
           consistency: 0,
           completionRate: 0,
           automationPotential: 0,
           ...breakdown,
         },
-        frequency: pageTimeline.length,
+        frequency: support > 0 ? support : pageTimeline.length,
         lastSeen: page.updated_at ?? page.created_at ?? new Date().toISOString(),
         sources: pageSources.length > 0 ? pageSources : [],
         evidence: [],

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { searchBrain, listPatterns, getGBrainStats } from "@/lib/gbrain";
 import { createClient } from "@/lib/supabase/server";
+import { chatCompletion } from "@/lib/openrouter";
 
 interface ChatRequest {
   message: string;
@@ -48,127 +49,76 @@ function findMockResponse(message: string): string {
   return "I found **23 active patterns** in your workflow data. Could you be more specific? Try asking about bug reports, deployments, code reviews, or your most common workflows.";
 }
 
-// ── Brain-powered response builder ───────────────────────────────────────
+// ── Gather brain context for LLM ─────────────────────────────────────────
 
-async function buildBrainResponse(message: string): Promise<string | null> {
+async function gatherBrainContext(): Promise<string> {
+  const sections: string[] = [];
+
   try {
-    const lower = message.toLowerCase();
+    const stats = await getGBrainStats();
+    sections.push(
+      `- Total events: ${stats.totalEvents}`,
+      `- Active patterns: ${stats.activePatterns}`,
+      `- Connected sources: ${stats.dataSources} of ${stats.totalSources}`,
+    );
+  } catch {
+    // stats unavailable
+  }
 
-    // Stats / overview queries
-    if (lower.includes("overview") || lower.includes("stats") || lower.includes("summary") || lower.includes("how many")) {
-      const stats = await getGBrainStats();
-      if (stats.totalEvents === 0) return null;
-
-      return [
-        `Here's your workflow overview:\n`,
-        `• **${stats.totalEvents} events** captured across **${stats.dataSources}** data sources`,
-        `• **${stats.activePatterns} active patterns** detected`,
-        stats.dataSources < stats.totalSources
-          ? `\nYou have ${stats.totalSources - stats.dataSources} unconnected sources — connecting them will improve pattern detection.`
-          : "",
-      ].filter(Boolean).join("\n");
-    }
-
-    // Pattern queries
-    if (lower.includes("pattern") || lower.includes("workflow") || lower.includes("common") || lower.includes("frequent")) {
-      const patterns = await listPatterns(10);
-      if (patterns.length === 0) return null;
-
-      const lines = patterns.slice(0, 5).map((p, i) => {
+  try {
+    const patterns = await listPatterns(10);
+    if (patterns.length > 0) {
+      const patternLines = patterns.slice(0, 5).map((p, i) => {
         const sources = p.sources.length > 0 ? p.sources.join(", ") : "multiple sources";
-        return `${i + 1}. **${p.name}** — score ${p.compositeScore}%, seen ${p.frequency} times (${sources})`;
+        return `  ${i + 1}. ${p.name} — score ${p.compositeScore}%, seen ${p.frequency} times (${sources})`;
       });
-
-      return [
-        `I found **${patterns.length} workflow patterns**:\n`,
-        ...lines,
-        patterns.length > 5 ? `\n...and ${patterns.length - 5} more. Ask about a specific pattern for details.` : "",
-      ].filter(Boolean).join("\n");
+      sections.push(`\nTop patterns:\n${patternLines.join("\n")}`);
     }
+  } catch {
+    // patterns unavailable
+  }
 
-    // Recent activity queries
-    if (lower.includes("recent") || lower.includes("week") || lower.includes("last") || lower.includes("today")) {
-      const supabase = await createClient();
-      const weekAgo = new Date();
-      weekAgo.setDate(weekAgo.getDate() - 7);
+  try {
+    const supabase = await createClient();
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
 
-      const { data: entries, error } = await supabase
-        .from("brain_timeline")
-        .select("source, summary, date")
-        .gte("date", weekAgo.toISOString())
-        .order("date", { ascending: false })
-        .limit(20);
+    const { data: entries } = await supabase
+      .from("brain_timeline")
+      .select("source, summary, date")
+      .gte("date", weekAgo.toISOString())
+      .order("date", { ascending: false })
+      .limit(10);
 
-      if (error || !entries || entries.length === 0) return null;
-
-      // Group by source
-      const bySource = new Map<string, number>();
-      for (const e of entries) {
-        bySource.set(e.source, (bySource.get(e.source) ?? 0) + 1);
-      }
-
-      const sourceLines = [...bySource.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .map(([source, count]) => `• **${source}** — ${count} events`);
-
-      const recentSummaries = entries.slice(0, 5).map((e) => `• ${e.summary}`);
-
-      return [
-        `In the past week, **${entries.length} events** were captured:\n`,
-        ...sourceLines,
-        `\n**Latest activity:**`,
-        ...recentSummaries,
-      ].join("\n");
+    if (entries && entries.length > 0) {
+      const recentLines = entries.slice(0, 5).map((e) => `  - [${e.source}] ${e.summary}`);
+      sections.push(`\nRecent activity:\n${recentLines.join("\n")}`);
     }
+  } catch {
+    // timeline unavailable
+  }
 
-    // People queries
-    if (lower.includes("who") || lower.includes("person") || lower.includes("people") || lower.includes("team")) {
-      const people = await searchBrain("people/");
-      if (people.length === 0) return null;
+  return sections.join("\n");
+}
 
-      const personPages = people.filter((p) => p.type === "person" || p.slug.startsWith("people/"));
-      if (personPages.length === 0) return null;
+const SYSTEM_PROMPT_TEMPLATE = `You are the Workflow Miner AI assistant. You help users understand their workflow patterns detected from Gmail, Calendar, Slack, and Linear.
 
-      const lines = personPages.map((p) => `• **${p.title}**`);
-      return [
-        `I found **${personPages.length} people** in your workflow data:\n`,
-        ...lines,
-        `\nThey appear across your connected tools — ask about a specific person for their activity.`,
-      ].join("\n");
-    }
+Here is the user's current data:
+{context}
 
-    // Tool / source queries
-    if (lower.includes("tool") || lower.includes("source") || lower.includes("connector") || lower.includes("connected")) {
-      const tools = await searchBrain("tools/");
-      if (tools.length === 0) return null;
+Answer concisely using markdown. Reference specific patterns and data when relevant. If the data above is sparse, still do your best to help the user based on what you know about workflow optimization.`;
 
-      const toolPages = tools.filter((p) => p.type === "tool" || p.slug.startsWith("tools/"));
-      if (toolPages.length === 0) return null;
+async function buildLLMResponse(message: string): Promise<string | null> {
+  try {
+    const context = await gatherBrainContext();
+    const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace("{context}", context || "No data available yet.");
 
-      const lines = toolPages.map((p) => `• **${p.title}**`);
-      return [
-        `You have **${toolPages.length} connected tools**:\n`,
-        ...lines,
-      ].join("\n");
-    }
+    const reply = await chatCompletion([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message },
+    ]);
 
-    // Generic search — try to find matching pages
-    const results = await searchBrain(message, 5);
-    if (results.length > 0) {
-      const lines = results.map((p) => {
-        const snippet = p.compiled_truth
-          ? p.compiled_truth.slice(0, 120) + (p.compiled_truth.length > 120 ? "..." : "")
-          : `Type: ${p.type}`;
-        return `• **${p.title}** — ${snippet}`;
-      });
-
-      return [
-        `I found **${results.length} results** matching your query:\n`,
-        ...lines,
-      ].join("\n");
-    }
-
-    return null;
+    return reply || null;
   } catch {
     return null;
   }
@@ -186,9 +136,9 @@ export async function POST(request: Request) {
       );
     }
 
-    // Try brain-powered response first, fall back to mock
-    const brainResponse = await buildBrainResponse(message);
-    const response = brainResponse ?? findMockResponse(message);
+    // Try LLM-powered response first, fall back to mock
+    const llmResponse = await buildLLMResponse(message);
+    const response = llmResponse ?? findMockResponse(message);
 
     return NextResponse.json({ response });
   } catch {
