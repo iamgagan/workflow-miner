@@ -36,7 +36,7 @@ export function ActivityChart() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.4 }}
     >
-      <Card>
+      <Card className="shadow-warm-card">
         <CardHeader>
           <CardTitle className="font-display text-base font-semibold">Events Over Time</CardTitle>
         </CardHeader>
@@ -50,8 +50,8 @@ export function ActivityChart() {
                     <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="patternGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="hsl(142 71% 45%)" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="hsl(142 71% 45%)" stopOpacity={0} />
+                    <stop offset="5%" stopColor="hsl(var(--accent))" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="hsl(var(--accent))" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid
@@ -91,7 +91,7 @@ export function ActivityChart() {
                 <Area
                   type="monotone"
                   dataKey="patterns"
-                  stroke="hsl(142 71% 45%)"
+                  stroke="hsl(var(--accent))"
                   strokeWidth={2}
                   fill="url(#patternGradient)"
                   name="Patterns"

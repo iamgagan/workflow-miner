@@ -28,10 +28,10 @@ const NUDGE_ICONS = {
 } as const;
 
 const NUDGE_COLORS = {
-  reminder: "text-blue-500",
-  suggestion: "text-green-500",
-  warning: "text-amber-500",
-  insight: "text-purple-500",
+  reminder: "text-primary",
+  suggestion: "text-primary",
+  warning: "text-accent",
+  insight: "text-accent",
 } as const;
 
 const SNOOZE_KEY = "coach-snoozed-until";
@@ -120,7 +120,7 @@ export function CoachNudge() {
           transition={{ type: "spring", damping: 25, stiffness: 300 }}
           className="fixed bottom-4 right-4 z-50 w-80"
         >
-          <Card className="shadow-lg border-border/50">
+          <Card className="shadow-warm-card border-l-4 border-l-accent border-border/50">
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">

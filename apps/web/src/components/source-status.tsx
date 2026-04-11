@@ -28,7 +28,7 @@ export function SourceStatus() {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.6 }}
     >
-      <Card>
+      <Card className="shadow-warm-card">
         <CardContent className="p-6">
           <h3 className="mb-4 text-base font-semibold">Data Sources</h3>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -50,7 +50,7 @@ export function SourceStatus() {
                       variant="outline"
                       className={
                         source.connected
-                          ? "border-emerald-500/20 bg-emerald-500/15 text-emerald-500"
+                          ? "border-primary/20 bg-primary/15 text-primary"
                           : "border-muted bg-muted text-muted-foreground"
                       }
                     >
