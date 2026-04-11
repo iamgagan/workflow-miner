@@ -30,17 +30,47 @@ export interface BrainLink {
   readonly created_at: string;
 }
 
-export async function getGBrainStats(): Promise<{
+export interface GBrainStats {
   totalEvents: number;
   activePatterns: number;
   skillsExported: number;
   dataSources: number;
   totalSources: number;
-}> {
+  /** % change in events vs the previous 7-day window. null when there's
+   * no previous-week data to compare against. */
+  eventsDeltaPct: number | null;
+  /** Most recent ingest timestamp (ISO) seen in the timeline. null if
+   * the brain is empty. */
+  lastIngestAt: string | null;
+}
+
+export async function getGBrainStats(): Promise<GBrainStats> {
+  const empty: GBrainStats = {
+    totalEvents: 0,
+    activePatterns: 0,
+    skillsExported: 0,
+    dataSources: 0,
+    totalSources: 4,
+    eventsDeltaPct: null,
+    lastIngestAt: null,
+  };
+
   try {
     const supabase = await createClient();
 
-    const [timelineRes, pagesRes, sourcesRes] = await Promise.all([
+    const now = new Date();
+    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+    const [
+      timelineRes,
+      pagesRes,
+      sourcesRes,
+      exportsRes,
+      thisWeekRes,
+      lastWeekRes,
+      latestRes,
+    ] = await Promise.all([
       supabase
         .from("brain_timeline")
         .select("*", { count: "exact", head: true }),
@@ -52,27 +82,69 @@ export async function getGBrainStats(): Promise<{
         .from("brain_timeline")
         .select("source")
         .limit(1000),
+      // Count real skill exports recorded by /api/skills/[id]/export.
+      // The activity_log table is best-effort; if it doesn't exist (legacy
+      // hosted deployments) we just report 0.
+      supabase
+        .from("activity_log")
+        .select("*", { count: "exact", head: true })
+        .eq("type", "export"),
+      // Events in the last 7 days, for the week-over-week delta on the
+      // Total Events stat card.
+      supabase
+        .from("brain_timeline")
+        .select("*", { count: "exact", head: true })
+        .gte("date", weekAgo.toISOString()),
+      // Events in the 7 days before that.
+      supabase
+        .from("brain_timeline")
+        .select("*", { count: "exact", head: true })
+        .gte("date", twoWeeksAgo.toISOString())
+        .lt("date", weekAgo.toISOString()),
+      // Most recent timeline row, for the "last ingest" hint.
+      supabase
+        .from("brain_timeline")
+        .select("date, created_at")
+        .order("date", { ascending: false })
+        .limit(1),
     ]);
 
     if (timelineRes.error || pagesRes.error) {
-      return { totalEvents: 0, activePatterns: 0, skillsExported: 0, dataSources: 0, totalSources: 4 };
+      return empty;
     }
 
     const totalEvents = timelineRes.count ?? 0;
     const activePatterns = pagesRes.count ?? 0;
+    const skillsExported = exportsRes?.error ? 0 : (exportsRes?.count ?? 0);
     const distinctSources = new Set(
-      (sourcesRes.data ?? []).map((e) => e.source).filter(Boolean),
+      ((sourcesRes.data as Array<{ source: string | null }>) ?? [])
+        .map((e) => e.source)
+        .filter((s): s is string => Boolean(s)),
     );
+
+    // Week-over-week delta. null when the previous week was empty (a 100%
+    // increase from 0 is meaningless to show).
+    const thisWeek = thisWeekRes?.error ? 0 : (thisWeekRes?.count ?? 0);
+    const lastWeek = lastWeekRes?.error ? 0 : (lastWeekRes?.count ?? 0);
+    const eventsDeltaPct =
+      lastWeek > 0 ? Math.round(((thisWeek - lastWeek) / lastWeek) * 100) : null;
+
+    const latestRow =
+      (latestRes?.data as Array<{ date: string | null; created_at: string | null }> | null)?.[0] ??
+      null;
+    const lastIngestAt = latestRow ? latestRow.date ?? latestRow.created_at : null;
 
     return {
       totalEvents,
       activePatterns,
-      skillsExported: 0,
+      skillsExported,
       dataSources: distinctSources.size,
       totalSources: 4,
+      eventsDeltaPct,
+      lastIngestAt,
     };
   } catch {
-    return { totalEvents: 0, activePatterns: 0, skillsExported: 0, dataSources: 0, totalSources: 4 };
+    return empty;
   }
 }
 
@@ -271,9 +343,11 @@ export async function getPatternEvidence(slug: string): Promise<
   try {
     const supabase = await createClient();
 
+    // Fetch the workflow page including its frontmatter so we can read the
+    // evidenceEventIds list written by /api/patterns/mine.
     const { data: page, error: pageError } = await supabase
       .from("brain_pages")
-      .select("id")
+      .select("id, frontmatter")
       .eq("slug", slug)
       .single();
 
@@ -281,6 +355,47 @@ export async function getPatternEvidence(slug: string): Promise<
       return [];
     }
 
+    // Resolution order:
+    //   1. evidenceEventIds in frontmatter — written by the miner so the
+    //      evidence panel shows the actual events that contributed to the
+    //      pattern. This is the canonical path.
+    //   2. Legacy: timeline entries linked to the workflow page_id (kept
+    //      for compatibility with hand-authored workflow pages).
+    const frontmatter = (page.frontmatter ?? {}) as Record<string, unknown>;
+    const evidenceIds = Array.isArray(frontmatter.evidenceEventIds)
+      ? (frontmatter.evidenceEventIds as string[])
+      : [];
+
+    if (evidenceIds.length > 0) {
+      const { data: byIdEntries } = await supabase
+        .from("brain_timeline")
+        .select("id, page_id, date, source, summary, detail, created_at")
+        .in("id", evidenceIds);
+
+      if (byIdEntries && byIdEntries.length > 0) {
+        // Preserve the step order recorded by the miner instead of the
+        // database's natural row order.
+        const byId = new Map(
+          (byIdEntries as Array<Record<string, unknown>>).map((row) => [
+            String(row.id),
+            row,
+          ]),
+        );
+        return evidenceIds
+          .map((id) => byId.get(String(id)))
+          .filter((row): row is Record<string, unknown> => Boolean(row))
+          .map((e) => ({
+            id: String(e.id),
+            type: (e.source as string) ?? "event",
+            source: (e.source as string) ?? "unknown",
+            timestamp: (e.date as string) ?? (e.created_at as string),
+            summary: (e.summary as string) ?? "Timeline entry",
+            actor: "",
+          }));
+      }
+    }
+
+    // Legacy fallback: timeline entries linked by page_id.
     const { data: entries, error } = await supabase
       .from("brain_timeline")
       .select("id, page_id, date, source, summary, detail, created_at")

@@ -51,6 +51,19 @@ export async function GET(
     const skill = workflowPageToSkill(result.data as BrainPageRow);
     const filename = `${skill.id.replace(/[\/\\]/g, "-")}.skill.yaml`;
 
+    // Record the export so the dashboard "Skill Exports" stat reflects
+    // reality. Best-effort: a missing activity_log table just gets ignored.
+    try {
+      await supabase.from("activity_log").insert({
+        user_id: "local",
+        source: "skills",
+        type: "export",
+        description: `Exported skill pack: ${skill.name}`,
+      });
+    } catch {
+      /* table may not exist on legacy hosted deployments */
+    }
+
     return new NextResponse(skill.yaml, {
       status: 200,
       headers: {

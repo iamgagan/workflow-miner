@@ -109,14 +109,44 @@ export async function POST() {
       };
     });
 
-    // 5. Run PatternMiner with minSupport: 2 for small datasets
-    const miner = new PatternMiner({ minSupport: 2 });
-    const patterns = miner.mine(sessionSequences);
+    // 5. Run PatternMiner with minSupport: 2 for small datasets and a
+    //    conservative maxPatternLength so dense seed sessions don't
+    //    blow up into tens of thousands of subsequences. Real workflow
+    //    patterns are 2-6 steps; anything longer is signal-poor.
+    const miner = new PatternMiner({ minSupport: 2, maxPatternLength: 6 });
+    const allPatterns = miner.mine(sessionSequences);
 
-    // 6. Write/update brain_pages entries for each pattern
+    // Cap how many patterns we persist. The miner already returns them
+    // sorted by support desc then length desc; take the top 50 so the
+    // dashboard / skills page stays focused on the most-supported flows.
+    const patterns = allPatterns.slice(0, 50);
+
+    // Build a sessionId → events lookup so we can resolve evidence event IDs
+    // when persisting each pattern below.
+    const sessionEventsById = new Map<string, EventRow[]>();
+    for (const session of sessions) {
+      const events = eventRows.filter((e) =>
+        session.eventIds.includes(e.event_id),
+      );
+      sessionEventsById.set(session.sessionId, events);
+    }
+
+    // 6. Write/update brain_pages entries for each pattern. We also resolve
+    //    a small set of "evidence event IDs" for each pattern: the actual
+    //    timeline rows whose event_type sequence matched the pattern in the
+    //    first contributing session. This is what the pattern detail page
+    //    reads via /api/patterns/[id]/evidence — without it the evidence
+    //    panel was always empty because timeline entries are linked to
+    //    source tool pages, not workflow pages.
     const upsertResults = await Promise.all(
       patterns.map(async (pattern) => {
         const slug = `workflows/${slugify(pattern.name)}`;
+
+        const evidenceEventIds = collectEvidenceEventIds(
+          pattern.steps.map((s) => s.eventType),
+          pattern.exampleSessions,
+          sessionEventsById,
+        );
 
         const { error: upsertError } = await supabase
           .from("brain_pages")
@@ -131,6 +161,7 @@ export async function POST() {
                 steps: pattern.steps,
                 avgDurationMs: pattern.avgDurationMs,
                 exampleSessions: pattern.exampleSessions,
+                evidenceEventIds,
                 minedAt: new Date().toISOString(),
               },
               updated_at: new Date().toISOString(),
@@ -159,31 +190,179 @@ export async function POST() {
 }
 
 /**
- * Derive an event type string from the source and summary.
- * Uses source as the primary type, falling back to a keyword from summary.
+ * Derive a semantic event type from a brain_timeline entry's source +
+ * summary. The mining alphabet is what determines pattern quality: if the
+ * alphabet is just `gmail`/`slack`/`linear`/`calendar` (the source names)
+ * then PrefixSpan can only find boring patterns like `gmail → gmail`.
+ * Mapping to verbs like `email_received` / `meeting_scheduled` /
+ * `issue_created` lets the miner discover meaningful cross-tool sequences
+ * such as `email_received → meeting_scheduled → issue_created`.
+ *
+ * Resolution order:
+ *   1. Check the summary text for known intent keywords (verb + object).
+ *      This is the dominant signal since real connector summaries are
+ *      "Bug reported by Alice", "Meeting scheduled with Marcus", etc.
+ *   2. Fall back to the source-aware default (e.g. `gmail` → `email_event`,
+ *      `linear` → `issue_event`) so a summary-less entry still produces a
+ *      meaningful type rather than collapsing onto a single bucket.
+ *   3. Last-resort `activity` for anything else.
  */
 function deriveEventType(
   source: string | null,
   summary: string | null,
 ): string {
-  if (source) return source;
-  if (!summary) return "unknown";
+  const text = (summary ?? "").toLowerCase().trim();
 
-  // Extract a simple type from the first few words of the summary
-  const normalized = summary.toLowerCase().trim();
-  if (normalized.includes("meeting") || normalized.includes("call"))
-    return "meeting";
-  if (normalized.includes("email") || normalized.includes("sent"))
-    return "email";
-  if (normalized.includes("commit") || normalized.includes("push"))
-    return "code_commit";
-  if (normalized.includes("review") || normalized.includes("pr"))
-    return "code_review";
-  if (normalized.includes("message") || normalized.includes("chat"))
-    return "message";
-  if (normalized.includes("task") || normalized.includes("issue"))
-    return "task_update";
+  // Step 1: keyword extraction. Specific verbs and concrete actions win
+  // over generic nouns so a single scenario produces a varied step
+  // sequence instead of collapsing onto one bucket. Examples:
+  //
+  //   "Bug report received from Sarah Chen"   → bug_reported
+  //   "Bug severity discussed in #triage"     → issue_triaged
+  //   "Bug ticket LIN-487 moved to In Progress" → issue_created
+  //   "Bug triage meeting with Sarah Chen"    → meeting_scheduled
+  //
+  // Without this priority order, all four would match the generic "bug"
+  // keyword and the miner would surface degenerate `bug → bug → bug` runs.
+  if (text) {
+    // Step 1A: action verbs that always win, regardless of topical noise.
+    // These are "this event was a CREATE/POST/SEND/etc." signals.
+
+    // Created / opened — issue lifecycle start.
+    if (
+      /\b(created from|created with|created\b|opened|filed)\b/.test(text) &&
+      /\b(ticket|issue|task|story|alert)\b/.test(text)
+    )
+      return "issue_created";
+
+    // Moved / updated — issue lifecycle middle.
+    if (/\b(moved to|in progress|updated|reassigned)\b/.test(text))
+      return "issue_updated";
+
+    // Reply / acknowledgment / forward — email actions.
+    if (
+      /\b(reply sent|reply received|acknowledgment|acknowledg(e|ed) email|forwarded|follow-?up email)\b/.test(
+        text,
+      )
+    )
+      return "email_replied";
+
+    // Deploy / release / rollback.
+    if (/\b(deploy(ed)?|rollback|merged|released|shipped)\b/.test(text))
+      return "code_deployed";
+
+    // PR review / approve / reject.
+    if (
+      /\b(pr (review|merge)|pull request|review requested|approved|rejected|review feedback)\b/.test(
+        text,
+      )
+    )
+      return "code_reviewed";
+
+    // Posted / flagged / mentioned in a channel — chat messages. We check
+    // this BEFORE the meeting topical check so a "thread posted about a
+    // standup" gets classified as a message, not a meeting.
+    if (/\b(posted in|flagged in|mentioned in|thread (posted|started)|dm sent)\b/.test(text))
+      return "message_posted";
+
+    // Step 1B: topic / setting nouns. Apply only when no action verb above
+    // matched, so a meeting that schedules a follow-up classifies as a
+    // meeting and a chat message ABOUT a meeting classifies as a message.
+
+    // Meeting / calendar entries. Avoid the bare word "standup" so a
+    // downstream event mentioning a standup doesn't get reclassified as one.
+    if (/\b(meeting (held|scheduled|started)|1:?1|sync(ed)? up|call held|retrospective)\b/.test(text))
+      return "meeting_scheduled";
+
+    // Triage / severity / assignment.
+    if (/\b(triag(e|ed)|severity|assigned to)\b/.test(text)) return "issue_triaged";
+
+    // Escalation: P0/P1 or "escalated to".
+    if (/\b(escalat(ion|ed)|p0|p1|urgent)\b/.test(text)) return "escalation_raised";
+
+    // Followup / action item.
+    if (/\b(followup|follow-up|action item|next step)\b/.test(text))
+      return "followup_assigned";
+
+    // Decision recorded.
+    if (/\b(decision|decide(d)?|outcome|chose)\b/.test(text)) return "decision_made";
+
+    // Generic chat surface.
+    if (/\b(slack|channel|thread|dm)\b/.test(text)) return "message_posted";
+
+    // Email — sent / received.
+    if (/\b(email received|email sent|inbox|email from|email to)\b/.test(text))
+      return "email_received";
+
+    // Generic bug / incident — last resort.
+    if (/\b(bug|incident|outage|alert)\b/.test(text)) return "bug_reported";
+
+    // Doc / spec / design.
+    if (/\b(spec|doc|design|proposal)\b/.test(text)) return "doc_shared";
+  }
+
+  // Step 2: source-aware fallback. We avoid returning the bare source name
+  // because that gives the miner a degenerate single-letter alphabet.
+  if (source) {
+    switch (source.toLowerCase()) {
+      case "gmail":
+        return "email_event";
+      case "calendar":
+        return "calendar_event";
+      case "slack":
+        return "message_event";
+      case "linear":
+        return "issue_event";
+      default:
+        return `${source.toLowerCase()}_event`;
+    }
+  }
+
   return "activity";
+}
+
+/**
+ * Walk the supporting sessions in order and collect, from the FIRST session
+ * that fully contains the pattern's step sequence, the actual event IDs
+ * that matched each step. Up to `maxSessions` sessions are scanned to find
+ * a match (in case the first one was already pruned). Returns at most
+ * `pattern.steps.length` event IDs in step order.
+ *
+ * This is what makes the evidence panel on the pattern detail page actually
+ * show real events instead of an empty list.
+ */
+function collectEvidenceEventIds(
+  stepEventTypes: readonly string[],
+  supportingSessions: readonly string[],
+  sessionEventsById: ReadonlyMap<string, EventRow[]>,
+  maxSessions = 5,
+): string[] {
+  for (const sessionId of supportingSessions.slice(0, maxSessions)) {
+    const events = sessionEventsById.get(sessionId);
+    if (!events || events.length === 0) continue;
+
+    // Find the first occurrence of each step type, advancing the cursor
+    // so steps must appear in order. Mirrors the engine's matching logic.
+    const matched: string[] = [];
+    let cursor = 0;
+    for (const stepType of stepEventTypes) {
+      let found = false;
+      for (let i = cursor; i < events.length; i++) {
+        if (events[i].event_type === stepType) {
+          matched.push(events[i].event_id);
+          cursor = i + 1;
+          found = true;
+          break;
+        }
+      }
+      if (!found) break;
+    }
+
+    if (matched.length === stepEventTypes.length) {
+      return matched;
+    }
+  }
+  return [];
 }
 
 /**

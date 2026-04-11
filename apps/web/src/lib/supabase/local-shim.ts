@@ -190,7 +190,7 @@ type Filter =
 
 interface QueryState {
   readonly table: string;
-  op: "select" | "insert" | "upsert";
+  op: "select" | "insert" | "upsert" | "delete";
   columns: string;
   filters: Filter[];
   orderBy: { col: string; ascending: boolean } | null;
@@ -320,6 +320,21 @@ class QueryBuilder<T = any> {
     return this;
   }
 
+  /**
+   * Delete rows matching the chained filters. Mirrors the Supabase pattern:
+   *   client.from("brain_timeline").delete().eq("source", "gmail")
+   *
+   * Without any filters this becomes `DELETE FROM <table>` — useful for
+   * the seed-brain reset path. We require either at least one filter or
+   * an explicit no-op `.neq("id", 0)`-style guard at the call site to
+   * avoid accidental table wipes; the API route layer is responsible for
+   * that, this method does not enforce it.
+   */
+  delete(): this {
+    this.state.op = "delete";
+    return this;
+  }
+
   eq(col: string, val: unknown): this {
     this.state.filters.push({ kind: "eq", col, val });
     return this;
@@ -398,6 +413,8 @@ class QueryBuilder<T = any> {
           return await this.executeInsert<U>(db);
         case "upsert":
           return await this.executeUpsert<U>(db);
+        case "delete":
+          return await this.executeDelete<U>(db);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -513,6 +530,13 @@ class QueryBuilder<T = any> {
       this.state.upsertOnConflict,
       this.state.returnSelect,
     );
+    const result = await db.query(sql, params);
+    return { data: result.rows as U, error: null };
+  }
+
+  private async executeDelete<U>(db: PGliteInstance): Promise<ShimResult<U>> {
+    const { sql: whereSql, params } = this.buildWhere();
+    const sql = `DELETE FROM ${quoteIdent(this.state.table)}${whereSql}`;
     const result = await db.query(sql, params);
     return { data: result.rows as U, error: null };
   }

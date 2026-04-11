@@ -2,9 +2,18 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isDesktopMode } from "@/lib/supabase/local-shim";
 
-function daysAgo(n: number): string {
+/**
+ * Build an ISO timestamp `daysBack` days before now, offset by `hour:minute`
+ * within that day. Lets us seed events that cluster realistically — multiple
+ * events within one work-day land in the same Sessionizer session, while
+ * events on different days are isolated. Without distinct hours of day every
+ * mined pattern would have avgDurationMs ≈ 0 because all timestamps would
+ * collapse to the moment the seed ran.
+ */
+function timestamp(daysBack: number, hour: number, minute = 0): string {
   const d = new Date();
-  d.setDate(d.getDate() - n);
+  d.setDate(d.getDate() - daysBack);
+  d.setHours(hour, minute, 0, 0);
   return d.toISOString();
 }
 
@@ -69,63 +78,88 @@ const WORKFLOW_PAGES = [
   },
 ] as const;
 
-const TIMELINE_TEMPLATES: ReadonlyArray<{
+/**
+ * Scenario-driven timeline seed.
+ *
+ * Each scenario is a tight cluster of cross-tool events that all fall
+ * within one work-day so the Sessionizer (4-hour gap) groups them into a
+ * single session. Crucially, scenarios are scheduled on DIFFERENT days
+ * from one another — if two scenarios share a day they collapse into one
+ * mega-session and PrefixSpan suffers a combinatorial explosion.
+ *
+ * The summaries use keywords like "bug", "escalation", "meeting", "PR",
+ * "deploy" so the keyword-aware `deriveEventType` resolver in
+ * /api/patterns/mine maps each event to a meaningful `event_type`
+ * (`bug_reported`, `meeting_scheduled`, `issue_created`, `code_pushed`).
+ *
+ * Replaying each scenario on multiple days gives the miner enough support
+ * to surface it as a frequent subsequence, while keeping the alphabet
+ * compact enough to avoid runaway pattern counts.
+ */
+interface SeedEvent {
   readonly toolSlug: string;
   readonly source: string;
-  readonly summaries: readonly string[];
-}> = [
+  /** Hour of day the event happened (0-23). */
+  readonly hour: number;
+  readonly minute?: number;
+  readonly summary: string;
+}
+
+interface SeedScenario {
+  readonly name: string;
+  readonly events: readonly SeedEvent[];
+  /** Days-back at which to replay this scenario shape. Each replay produces
+   * one fresh Sessionizer session. */
+  readonly daysBack: readonly number[];
+}
+
+const SCENARIOS: readonly SeedScenario[] = [
   {
-    toolSlug: "tools/gmail",
-    source: "gmail",
-    summaries: [
-      "Bug report received from Sarah Chen",
-      "Customer escalation email from Marcus Johnson",
-      "Weekly summary digest sent",
-      "Meeting follow-up notes shared",
-      "Feature request forwarded to product team",
-      "Action items email from standup recap",
-      "Deploy notification received",
-      "PR review feedback from Alex Rivera",
+    name: "Bug triage flow",
+    daysBack: [1, 5, 9, 13],
+    events: [
+      { toolSlug: "tools/gmail", source: "gmail", hour: 9, minute: 12, summary: "Bug report received from Sarah Chen" },
+      { toolSlug: "tools/slack", source: "slack", hour: 9, minute: 28, summary: "Bug severity discussed in #triage" },
+      { toolSlug: "tools/linear", source: "linear", hour: 9, minute: 47, summary: "Bug ticket LIN-487 moved to In Progress" },
+      { toolSlug: "tools/calendar", source: "calendar", hour: 11, minute: 0, summary: "Bug triage meeting with Sarah Chen" },
     ],
   },
   {
-    toolSlug: "tools/calendar",
-    source: "calendar",
-    summaries: [
-      "Standup meeting held",
-      "Sprint planning session",
-      "Bug triage meeting with Sarah Chen",
-      "1:1 with Marcus Johnson",
-      "Design review for escalation flow",
-      "Deploy window scheduled",
-      "Retrospective meeting",
+    name: "Customer escalation pipeline",
+    daysBack: [2, 6, 10],
+    events: [
+      { toolSlug: "tools/gmail", source: "gmail", hour: 8, minute: 45, summary: "URGENT customer escalation email from Marcus Johnson" },
+      { toolSlug: "tools/slack", source: "slack", hour: 8, minute: 58, summary: "Escalation flagged in #support channel" },
+      { toolSlug: "tools/linear", source: "linear", hour: 9, minute: 20, summary: "Customer issue LIN-501 escalated to P1" },
+      { toolSlug: "tools/gmail", source: "gmail", hour: 11, minute: 15, summary: "Acknowledgment email reply sent to customer" },
     ],
   },
   {
-    toolSlug: "tools/slack",
-    source: "slack",
-    summaries: [
-      "PR #142 review requested in #engineering",
-      "Bug severity discussed in #triage",
-      "Customer escalation flagged in #support",
-      "Deploy status shared in #releases",
-      "Standup thread posted in #daily",
-      "Alex Rivera mentioned in #code-review",
-      "Action items pinned in #team",
-      "Monitoring alert acknowledged",
+    name: "Standup → plan → execute",
+    daysBack: [3, 4, 7, 11],
+    events: [
+      { toolSlug: "tools/calendar", source: "calendar", hour: 9, minute: 30, summary: "Daily standup meeting held" },
+      { toolSlug: "tools/slack", source: "slack", hour: 10, minute: 5, summary: "Standup thread posted in #daily" },
+      { toolSlug: "tools/linear", source: "linear", hour: 10, minute: 22, summary: "Sprint task LIN-512 created from standup" },
     ],
   },
   {
-    toolSlug: "tools/linear",
-    source: "linear",
-    summaries: [
-      "Bug ticket LIN-487 moved to In Progress",
-      "Customer issue LIN-501 escalated to P1",
-      "Sprint task LIN-512 completed",
-      "PR review task LIN-519 assigned to Alex Rivera",
-      "Deploy checklist LIN-523 created",
-      "Meeting notes task LIN-530 marked done",
-      "Monitoring ticket LIN-535 created from alert",
+    name: "PR review → deploy → monitor",
+    daysBack: [3, 8, 12],
+    events: [
+      { toolSlug: "tools/slack", source: "slack", hour: 14, minute: 0, summary: "PR #142 review requested in #engineering" },
+      { toolSlug: "tools/linear", source: "linear", hour: 14, minute: 35, summary: "PR review task LIN-519 assigned to Alex Rivera" },
+      { toolSlug: "tools/slack", source: "slack", hour: 15, minute: 45, summary: "Deploy status shared in #releases" },
+      { toolSlug: "tools/slack", source: "slack", hour: 16, minute: 30, summary: "Monitoring alert acknowledged in #ops" },
+    ],
+  },
+  {
+    name: "Meeting → notes → follow-ups",
+    daysBack: [2, 7, 11],
+    events: [
+      { toolSlug: "tools/calendar", source: "calendar", hour: 13, minute: 0, summary: "Design review meeting for escalation flow" },
+      { toolSlug: "tools/gmail", source: "gmail", hour: 14, minute: 5, summary: "Meeting follow-up notes shared via email" },
+      { toolSlug: "tools/linear", source: "linear", hour: 14, minute: 30, summary: "Followup ticket LIN-530 created from meeting" },
     ],
   },
 ];
@@ -170,6 +204,19 @@ export async function POST() {
   const supabase = createAdminClient();
 
   try {
+    // 0. Reset the brain so reseeding is idempotent. Without this, calling
+    //    /api/admin/seed-brain twice doubles the timeline rows (the seeded
+    //    page upserts dedupe by slug but timeline inserts don't have a
+    //    unique key). We delete in dependency order: timeline → links →
+    //    workflow pages. Tool/person pages are kept because they're
+    //    referenced by stable slugs the rest of the app may depend on.
+    await supabase.from("brain_timeline").delete().gte("id", 0);
+    await supabase.from("brain_links").delete().gte("id", 0);
+    await supabase
+      .from("brain_pages")
+      .delete()
+      .eq("type", "workflow");
+
     // 1. Insert pages (tools, people, workflows)
     const allPages = [
       ...TOOL_PAGES.map((p) => ({ ...p, frontmatter: {} })),
@@ -192,7 +239,11 @@ export async function POST() {
       slugToId[p.slug] = p.id;
     }
 
-    // 2. Insert timeline entries (~30 entries across past 2 weeks)
+    // 2. Insert timeline entries by replaying each scenario across multiple
+    //    days. Each scenario produces a tight cluster of cross-tool events
+    //    that the Sessionizer groups into a single session, and replaying
+    //    the same shape on multiple days gives PrefixSpan the support count
+    //    it needs to surface the scenario as a mined pattern.
     const timelineEntries: Array<{
       page_id: number;
       date: string;
@@ -200,16 +251,18 @@ export async function POST() {
       summary: string;
     }> = [];
 
-    for (const tmpl of TIMELINE_TEMPLATES) {
-      const pageId = slugToId[tmpl.toolSlug];
-      if (!pageId) continue;
-      for (let i = 0; i < tmpl.summaries.length; i++) {
-        timelineEntries.push({
-          page_id: pageId,
-          date: daysAgo(Math.floor(Math.random() * 14)),
-          source: tmpl.source,
-          summary: tmpl.summaries[i],
-        });
+    for (const scenario of SCENARIOS) {
+      for (const daysBack of scenario.daysBack) {
+        for (const event of scenario.events) {
+          const pageId = slugToId[event.toolSlug];
+          if (!pageId) continue;
+          timelineEntries.push({
+            page_id: pageId,
+            date: timestamp(daysBack, event.hour, event.minute ?? 0),
+            source: event.source,
+            summary: event.summary,
+          });
+        }
       }
     }
 

@@ -19,34 +19,75 @@ interface DashboardStats {
   skillsExported: number;
   dataSources: number;
   totalSources: number;
+  /** Real week-over-week delta computed by /api/dashboard. null when there's
+   * no previous-week baseline yet. */
+  eventsDeltaPct: number | null;
+  /** ISO timestamp of the most recent ingest. null on a fresh brain. */
+  lastIngestAt: string | null;
+}
+
+function relativeTimeLabel(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+function eventsDescription(data: DashboardStats): string {
+  if (data.totalEvents === 0) return "No events ingested yet";
+  if (data.eventsDeltaPct === null) {
+    return data.lastIngestAt
+      ? `Last ingest ${relativeTimeLabel(data.lastIngestAt)}`
+      : "No previous-week baseline";
+  }
+  const sign = data.eventsDeltaPct > 0 ? "+" : "";
+  return `${sign}${data.eventsDeltaPct}% vs last week`;
 }
 
 function buildStatCards(data: DashboardStats) {
+  const connectedCount = data.dataSources;
+  const disconnectedCount = data.totalSources - data.dataSources;
+
   return [
     {
       title: "Total Events",
       value: data.totalEvents,
       icon: Activity,
-      description: "+12% from last week",
+      description: eventsDescription(data),
     },
     {
       title: "Active Patterns",
       value: data.activePatterns,
       icon: GitBranch,
-      description: `${data.activePatterns} patterns detected`,
+      description:
+        data.activePatterns === 0
+          ? "Run Mine Patterns to detect"
+          : `${data.activePatterns} workflow${data.activePatterns === 1 ? "" : "s"} mined`,
     },
     {
       title: "Skill Exports",
       value: data.skillsExported,
       icon: Sparkles,
-      description: "exported skills",
+      description:
+        data.skillsExported === 0
+          ? "No skills exported yet"
+          : `${data.skillsExported} download${data.skillsExported === 1 ? "" : "s"}`,
     },
     {
       title: "Data Sources",
       value: data.dataSources,
       suffix: ` / ${data.totalSources}`,
       icon: Database,
-      description: `${data.totalSources - data.dataSources} disconnected`,
+      description:
+        connectedCount === 0
+          ? "Connect a source to begin"
+          : disconnectedCount === 0
+            ? "All sources connected"
+            : `${disconnectedCount} not connected`,
     },
   ];
 }
@@ -73,6 +114,8 @@ export default function DashboardPage() {
           skillsExported: 0,
           dataSources: 0,
           totalSources: 4,
+          eventsDeltaPct: null,
+          lastIngestAt: null,
         });
       })
       .finally(() => {

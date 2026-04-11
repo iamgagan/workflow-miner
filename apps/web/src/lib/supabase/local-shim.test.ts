@@ -393,6 +393,50 @@ describe("auth", () => {
   });
 });
 
+describe("delete", () => {
+  test("delete().eq() removes only matching rows", async () => {
+    const client = createLocalShimClient();
+    await client.from("brain_pages").upsert(
+      [
+        { slug: "delete/keep", type: "concept", title: "Keep" },
+        { slug: "delete/remove", type: "concept", title: "Remove" },
+      ],
+      { onConflict: "slug" },
+    );
+
+    await client.from("brain_pages").delete().eq("slug", "delete/remove");
+
+    const remaining = await client
+      .from("brain_pages")
+      .select("slug")
+      .in("slug", ["delete/keep", "delete/remove"]);
+    assert.equal(remaining.error, null);
+    const slugs = (remaining.data as Array<{ slug: string }>).map((r) => r.slug);
+    assert.deepEqual(slugs, ["delete/keep"]);
+  });
+
+  test("delete().gte() removes everything in a table when guard always matches", async () => {
+    const client = createLocalShimClient();
+    // Insert into a fresh tag table — easier to assert "table is empty"
+    // without affecting tests above.
+    await client.from("brain_tags").insert([
+      { slug: "delete-test/a", tag: "x" },
+      { slug: "delete-test/b", tag: "y" },
+    ]);
+    const before = await client
+      .from("brain_tags")
+      .select("*", { count: "exact", head: true });
+    assert.ok((before.count ?? 0) >= 2);
+
+    await client.from("brain_tags").delete().gte("tag", "");
+
+    const after = await client
+      .from("brain_tags")
+      .select("*", { count: "exact", head: true });
+    assert.equal(after.count, 0);
+  });
+});
+
 describe("JSONB encoding", () => {
   test("nested objects round-trip cleanly", async () => {
     const client = createLocalShimClient();

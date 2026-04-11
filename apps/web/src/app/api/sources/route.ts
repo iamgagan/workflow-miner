@@ -40,7 +40,12 @@ export async function GET() {
       supabase
         .from("connector_tokens")
         .select("provider, updated_at, tokens, access_token"),
-      supabase.from("brain_timeline").select("source").limit(5000),
+      // Pull source + date so we can compute per-source event counts AND
+      // the most-recent event timestamp as a lastSync fallback.
+      supabase
+        .from("brain_timeline")
+        .select("source, date, created_at")
+        .limit(5000),
     ]);
 
     // Build a connection lookup keyed by source name. The Google OAuth flow
@@ -73,17 +78,31 @@ export async function GET() {
       }
     }
 
-    // Count events per source name in the timeline.
+    // Count events per source AND track the most-recent event timestamp
+    // per source. The timestamp serves as a lastSync fallback when the
+    // connector_tokens row has no updated_at (e.g. seed data, or after a
+    // manual disconnect that blanked the row).
     const counts = new Map<string, number>();
-    for (const row of (timelineRes.data ?? []) as Array<{ source: string | null }>) {
+    const latestEvent = new Map<string, string>();
+    for (const row of (timelineRes.data ?? []) as Array<{
+      source: string | null;
+      date: string | null;
+      created_at: string | null;
+    }>) {
       if (!row.source) continue;
       counts.set(row.source, (counts.get(row.source) ?? 0) + 1);
+      const ts = row.date ?? row.created_at;
+      if (!ts) continue;
+      const prev = latestEvent.get(row.source);
+      if (!prev || new Date(ts).getTime() > new Date(prev).getTime()) {
+        latestEvent.set(row.source, ts);
+      }
     }
 
     const sources: SourceStatus[] = SOURCE_KEYS.map((key) => ({
       key,
       connected: connected.has(key) || (counts.get(key) ?? 0) > 0,
-      lastSync: connected.get(key) ?? null,
+      lastSync: connected.get(key) ?? latestEvent.get(key) ?? null,
       eventCount: counts.get(key) ?? 0,
     }));
 

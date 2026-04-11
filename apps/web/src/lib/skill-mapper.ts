@@ -31,6 +31,7 @@ interface PatternStep {
 
 /** Maps event types to a human-readable action verb for skill steps. */
 const EVENT_ACTION_MAP: Record<string, string> = {
+  // Canonical EventType enum values from the engine.
   message_sent: "Send message",
   message_received: "Receive message",
   issue_created: "Create issue",
@@ -41,11 +42,21 @@ const EVENT_ACTION_MAP: Record<string, string> = {
   followup_assigned: "Assign follow-up",
   artifact_shared: "Share artifact",
   decision_made: "Record decision",
-  // Source-keyed event types from the seed data fall back to capitalized form
+  // Synthetic types produced by the keyword resolver in /api/patterns/mine.
+  message_posted: "Post message in channel",
+  email_received: "Receive email",
+  email_replied: "Reply to email",
+  bug_reported: "Receive bug report",
+  issue_triaged: "Triage issue",
+  escalation_raised: "Raise escalation",
+  code_reviewed: "Review code",
+  code_deployed: "Deploy code",
+  doc_shared: "Share document",
 };
 
 /** Maps event types to the engine connector / tool name. */
 const EVENT_TOOL_MAP: Record<string, string> = {
+  // Canonical EventType enum values.
   message_sent: "slack",
   message_received: "gmail",
   issue_created: "linear",
@@ -56,6 +67,17 @@ const EVENT_TOOL_MAP: Record<string, string> = {
   followup_assigned: "linear",
   artifact_shared: "slack",
   decision_made: "linear",
+  // Synthetic types from the keyword resolver.
+  message_posted: "slack",
+  email_received: "gmail",
+  email_replied: "gmail",
+  bug_reported: "linear",
+  issue_triaged: "linear",
+  escalation_raised: "linear",
+  code_reviewed: "slack",
+  code_deployed: "slack",
+  doc_shared: "slack",
+  // Bare source names (legacy fallback).
   gmail: "gmail",
   slack: "slack",
   linear: "linear",
