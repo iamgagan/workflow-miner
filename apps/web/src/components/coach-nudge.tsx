@@ -36,6 +36,12 @@ const NUDGE_COLORS = {
 
 const SNOOZE_KEY = "coach-snoozed-until";
 const DISMISSED_KEY = "coach-dismissed-ids";
+const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+interface DismissedStore {
+  ids: string[];
+  timestamp: number;
+}
 
 export function CoachNudge() {
   const [nudges, setNudges] = useState<CoachNudgeType[]>([]);
@@ -57,11 +63,49 @@ export function CoachNudge() {
   const getDismissedIds = useCallback((): string[] => {
     if (typeof window === "undefined") return [];
     try {
-      return JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
+      const raw = localStorage.getItem(DISMISSED_KEY);
+      if (!raw) return [];
+
+      const parsed: unknown = JSON.parse(raw);
+
+      // Handle new format with timestamp
+      if (
+        parsed !== null &&
+        typeof parsed === "object" &&
+        "ids" in (parsed as Record<string, unknown>) &&
+        "timestamp" in (parsed as Record<string, unknown>)
+      ) {
+        const store = parsed as DismissedStore;
+        if (Date.now() - store.timestamp > TWENTY_FOUR_HOURS) {
+          localStorage.removeItem(DISMISSED_KEY);
+          return [];
+        }
+        return store.ids;
+      }
+
+      // Handle legacy format (plain array) — clear it since it has no timestamp
+      if (Array.isArray(parsed)) {
+        localStorage.removeItem(DISMISSED_KEY);
+        return [];
+      }
+
+      return [];
     } catch {
       return [];
     }
   }, []);
+
+  const saveDismissedId = useCallback(
+    (id: string) => {
+      const currentIds = getDismissedIds();
+      const store: DismissedStore = {
+        ids: [...currentIds, id],
+        timestamp: Date.now(),
+      };
+      localStorage.setItem(DISMISSED_KEY, JSON.stringify(store));
+    },
+    [getDismissedIds],
+  );
 
   useEffect(() => {
     if (!isCoachEnabled() || isSnoozed()) return;
@@ -84,11 +128,7 @@ export function CoachNudge() {
   const handleDismiss = () => {
     const current = nudges[currentIndex];
     if (current) {
-      const dismissed = getDismissedIds();
-      localStorage.setItem(
-        DISMISSED_KEY,
-        JSON.stringify([...dismissed, current.id])
-      );
+      saveDismissedId(current.id);
     }
 
     if (currentIndex < nudges.length - 1) {
