@@ -1,14 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-const MOCK_STATS = {
-  totalEvents: 5700,
-  activePatterns: 23,
-  skillsExported: 8,
-  dataSources: 3,
-  totalSources: 4,
-};
-
 export async function GET() {
   try {
     const supabase = await createClient();
@@ -28,11 +20,6 @@ export async function GET() {
     );
     const dataSources = distinctSources.size;
 
-    // Fall back to mock if all counts are zero
-    if (totalEvents === 0 && activePatterns === 0) {
-      return NextResponse.json(MOCK_STATS);
-    }
-
     return NextResponse.json({
       totalEvents,
       activePatterns,
@@ -41,6 +28,12 @@ export async function GET() {
       totalSources: 4,
     });
   } catch {
-    return NextResponse.json(MOCK_STATS);
+    return NextResponse.json({
+      totalEvents: 0,
+      activePatterns: 0,
+      skillsExported: 0,
+      dataSources: 0,
+      totalSources: 4,
+    });
   }
 }

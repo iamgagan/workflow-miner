@@ -1,6 +1,7 @@
 import { Hero } from "@/components/landing/hero";
 import { Features } from "@/components/landing/features";
 import { PatternDemo } from "@/components/landing/pattern-demo";
+import { DownloadCTA } from "@/components/landing/download-cta";
 
 export default function Home() {
   return (
@@ -49,6 +50,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      <DownloadCTA />
 
       {/* Footer */}
       <footer className="border-t border-border/50 py-12">
