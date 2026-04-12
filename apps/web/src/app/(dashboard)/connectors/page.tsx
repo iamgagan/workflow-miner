@@ -24,7 +24,7 @@ interface ConnectorData {
 const connectors: ConnectorData[] = [
   {
     name: "Gmail",
-    description: "Email threads and conversations",
+    description: "Email threads and conversations (shares one Google connection with Calendar)",
     icon: Mail,
     color: "#ef4444",
     oauthProvider: "google",
@@ -32,7 +32,7 @@ const connectors: ConnectorData[] = [
   },
   {
     name: "Google Calendar",
-    description: "Meetings and calendar events",
+    description: "Meetings and calendar events (shares one Google connection with Gmail)",
     icon: Calendar,
     color: "#3b82f6",
     oauthProvider: "google",
@@ -302,8 +302,12 @@ function ConnectorsContent() {
   const handleDisconnect = useCallback(
     async (connector: ConnectorData) => {
       const provider = connector.oauthProvider;
+      const sharedWarning =
+        provider === "google"
+          ? " This also disconnects the other Google-backed source (Gmail ↔ Calendar share one connection)."
+          : "";
       const ok = window.confirm(
-        `Disconnect ${connector.name}? Future syncs will be skipped until you reconnect. Existing events stay in your local brain.`,
+        `Disconnect ${connector.name}? Future syncs will be skipped until you reconnect. Existing events stay in your local brain.${sharedWarning}`,
       );
       if (!ok) return;
 

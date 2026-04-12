@@ -95,6 +95,25 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
         if (busy) return;
         setBusy(true);
         try {
+          // Guard: if the user never completed step 2 (no connectors),
+          // POSTing to /api/sync returns "skipped" for every source and
+          // the user sees nothing happen. Route them back to /connectors
+          // instead of letting the wizard sit on a silent no-op.
+          const statusRes = await fetch("/api/connectors/status");
+          const statusBody = await statusRes.json().catch(() => ({}));
+          const connectors = (statusBody?.connectors ?? {}) as Record<
+            string,
+            { connected?: boolean }
+          >;
+          const anyConnected = Object.values(connectors).some(
+            (c) => c?.connected === true,
+          );
+          if (!anyConnected) {
+            router.push("/connectors");
+            dismiss();
+            return;
+          }
+
           await fetch("/api/sync?source=all", { method: "POST" });
           router.refresh();
           dismiss();

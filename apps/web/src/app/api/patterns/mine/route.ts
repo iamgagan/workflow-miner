@@ -3,8 +3,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   Sessionizer,
   PatternMiner,
+  PatternScorer,
   type SessionEvent,
   type SessionSequence,
+  type PatternCandidate,
+  type PatternInstance,
+  type ScoredPattern,
+  type EventType,
 } from "@workflow-miner/engine";
 
 /** Minimal shape matching the engine's EventRow for Sessionizer.groupEvents() */
@@ -122,13 +127,57 @@ export async function POST() {
     const patterns = allPatterns.slice(0, 50);
 
     // Build a sessionId → events lookup so we can resolve evidence event IDs
-    // when persisting each pattern below.
+    // AND reconstruct per-instance event sequences for the PatternScorer.
     const sessionEventsById = new Map<string, EventRow[]>();
     for (const session of sessions) {
       const events = eventRows.filter((e) =>
         session.eventIds.includes(e.event_id),
       );
       sessionEventsById.set(session.sessionId, events);
+    }
+
+    // 5b. Score each mined pattern on the four dimensions the engine's
+    //     PatternScorer exposes (frequency, consistency, completionRate,
+    //     automationPotential). Without this we'd only have the raw
+    //     support count as "confidence" and the dashboard's score radar
+    //     would collapse into a single axis.
+    const scorer = new PatternScorer();
+    const candidates: PatternCandidate[] = patterns.map((pattern) => {
+      const stepTypes = pattern.steps.map((s) => s.eventType);
+      // Build one PatternInstance per supporting session by walking the
+      // session's events in order and collecting the first match for
+      // each step. An instance is "completed" if we found all steps.
+      const instances: PatternInstance[] = pattern.exampleSessions.map(
+        (sessionId) => {
+          const events = sessionEventsById.get(sessionId) ?? [];
+          const matched: string[] = [];
+          let cursor = 0;
+          for (const stepType of stepTypes) {
+            for (let i = cursor; i < events.length; i++) {
+              if (events[i].event_type === stepType) {
+                matched.push(events[i].event_type);
+                cursor = i + 1;
+                break;
+              }
+            }
+          }
+          return {
+            eventTypes: matched as readonly EventType[],
+            completed: matched.length === stepTypes.length,
+          };
+        },
+      );
+      return {
+        id: pattern.id,
+        name: pattern.name,
+        steps: stepTypes as readonly EventType[],
+        instances,
+      };
+    });
+
+    const scoredById = new Map<string, ScoredPattern>();
+    for (const scored of scorer.scoreAll(candidates)) {
+      scoredById.set(scored.patternId, scored);
     }
 
     // 6. Write/update brain_pages entries for each pattern. We also resolve
@@ -148,6 +197,31 @@ export async function POST() {
           sessionEventsById,
         );
 
+        // Derive the list of source systems (gmail/slack/linear/calendar)
+        // that the evidence events came from. The pattern detail header
+        // renders these as colored badges; without this they'd always
+        // be empty for mined patterns because the workflow pages don't
+        // have linked timeline rows via page_id.
+        const sourceSet = new Set<string>();
+        for (const id of evidenceEventIds) {
+          const evt = eventRows.find((e) => e.event_id === id);
+          if (evt?.source_system) sourceSet.add(evt.source_system);
+        }
+        const sources = Array.from(sourceSet);
+
+        // Pull the scored dimensions (0-100 each) from the PatternScorer.
+        // When scoring fails for some reason we fall back to the raw
+        // support/totalSessions ratio so the UI still renders.
+        const scored = scoredById.get(pattern.id);
+        const breakdown = scored?.breakdown ?? {
+          frequency: 0,
+          consistency: 0,
+          completionRate: 0,
+          automationPotential: 0,
+        };
+        const compositeScore =
+          scored?.compositeScore ?? Math.round(pattern.confidence * 100);
+
         const { error: upsertError } = await supabase
           .from("brain_pages")
           .upsert(
@@ -156,12 +230,18 @@ export async function POST() {
               type: "workflow",
               title: pattern.name,
               frontmatter: {
-                confidence: pattern.confidence,
+                // `confidence` stays 0..1 for backwards compat with the
+                // existing listPatterns/getPattern helpers; UI code that
+                // wants the composite 0..100 should read compositeScore.
+                confidence: scored ? scored.compositeScore / 100 : pattern.confidence,
+                compositeScore,
+                breakdown,
                 support: pattern.support,
                 steps: pattern.steps,
                 avgDurationMs: pattern.avgDurationMs,
                 exampleSessions: pattern.exampleSessions,
                 evidenceEventIds,
+                sources,
                 minedAt: new Date().toISOString(),
               },
               updated_at: new Date().toISOString(),

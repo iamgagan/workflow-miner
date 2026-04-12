@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowLeft, Clock, Hash, Layers, Loader2, Inbox } from "lucide-react";
+import { ArrowLeft, Clock, Hash, Layers, Loader2, Trash2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,17 +37,42 @@ interface PatternDetail {
   evidence: Array<Record<string, unknown>>;
 }
 
-export default function PatternDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+export default function PatternDetailPage() {
   const routeParams = useParams();
+  const router = useRouter();
   const id = routeParams.id as string;
   const [pattern, setPattern] = useState<PatternDetail | null>(null);
   const [evidence, setEvidence] = useState<Array<{ id: string; type: string; source: string; timestamp: string; summary: string; actor: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!pattern) return;
+    const ok = window.confirm(
+      `Delete pattern "${pattern.name}"? This removes it from the local brain. Evidence events in the timeline are kept.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/patterns/${encodeURIComponent(pattern.id)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        window.alert(`Delete failed: ${body}`);
+        return;
+      }
+      router.push("/patterns");
+      router.refresh();
+    } catch (err) {
+      window.alert(
+        `Delete failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     Promise.all([
@@ -130,6 +155,17 @@ export default function PatternDetailPage({
             </div>
           </div>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="shrink-0 text-muted-foreground hover:text-destructive"
+          onClick={handleDelete}
+          disabled={deleting}
+          title="Delete this pattern"
+        >
+          <Trash2 className="mr-1.5 h-4 w-4" />
+          {deleting ? "Deleting..." : "Delete"}
+        </Button>
       </div>
 
       {/* Stats row */}

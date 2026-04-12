@@ -13,56 +13,51 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2 } from "lucide-react";
-import type { ActivityEvent } from "@/app/api/activity/route";
 
-interface ChartDataPoint {
+/**
+ * Dashboard events-per-day area chart.
+ *
+ * Reads /api/events/daily, which buckets brain_timeline rows into the last
+ * 14 calendar days. Previously this read /api/activity (the audit log of
+ * sync + export actions) which was almost always empty in desktop mode;
+ * now it reflects the user's actual workflow activity.
+ */
+
+interface ApiDayBucket {
   date: string;
+  iso: string;
   events: number;
-  patterns: number;
+  bySource: Record<string, number>;
 }
 
-function bucketByDay(events: ActivityEvent[]): ChartDataPoint[] {
-  const buckets = new Map<string, { events: number; patterns: number }>();
-
-  for (const event of events) {
-    const d = new Date(event.timestamp);
-    const key = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    const existing = buckets.get(key) ?? { events: 0, patterns: 0 };
-    existing.events += 1;
-    if (event.type === "pattern") {
-      existing.patterns += 1;
-    }
-    buckets.set(key, existing);
-  }
-
-  return Array.from(buckets.entries()).map(([date, counts]) => ({
-    date,
-    events: counts.events,
-    patterns: counts.patterns,
-  }));
+interface ApiResponse {
+  days: ApiDayBucket[];
+  totalEvents: number;
 }
 
 export function ActivityChart() {
-  const [data, setData] = useState<ChartDataPoint[]>([]);
+  const [data, setData] = useState<ApiDayBucket[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasRealData, setHasRealData] = useState(false);
 
   useEffect(() => {
-    fetch("/api/activity")
-      .then((res) => res.json())
-      .then((events: ActivityEvent[]) => {
-        if (events.length > 0) {
-          const bucketed = bucketByDay(events);
-          setData(bucketed);
-          setHasRealData(true);
-        }
+    let cancelled = false;
+    fetch("/api/events/daily?days=14")
+      .then((res) => (res.ok ? res.json() : { days: [], totalEvents: 0 }))
+      .then((body: ApiResponse) => {
+        if (cancelled) return;
+        setData(body.days ?? []);
+        setHasRealData((body.totalEvents ?? 0) > 0);
       })
       .catch(() => {
-        // fail silently
+        // fail silently — empty state takes over
       })
       .finally(() => {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -95,10 +90,6 @@ export function ActivityChart() {
                       <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
                       <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                     </linearGradient>
-                    <linearGradient id="patternGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(var(--accent))" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="hsl(var(--accent))" stopOpacity={0} />
-                    </linearGradient>
                   </defs>
                   <CartesianGrid
                     strokeDasharray="3 3"
@@ -116,6 +107,7 @@ export function ActivityChart() {
                     tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                     tickLine={false}
                     axisLine={false}
+                    allowDecimals={false}
                   />
                   <Tooltip
                     contentStyle={{
@@ -133,14 +125,6 @@ export function ActivityChart() {
                     strokeWidth={2}
                     fill="url(#eventGradient)"
                     name="Events"
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="patterns"
-                    stroke="hsl(var(--accent))"
-                    strokeWidth={2}
-                    fill="url(#patternGradient)"
-                    name="Patterns"
                   />
                 </AreaChart>
               </ResponsiveContainer>

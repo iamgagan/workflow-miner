@@ -208,12 +208,19 @@ export async function listPatterns(limit = 20): Promise<
       timelineByPage.set(entry.page_id, existing);
     }
 
-    return pages.map((page, index) => {
+    return pages.map((page) => {
       const pageTimeline = timelineByPage.get(page.id) ?? [];
-      const pageSources = [...new Set(pageTimeline.map((t) => t.source).filter(Boolean))];
       const frontmatter = (page.frontmatter ?? {}) as Record<string, unknown>;
-      const breakdown = (frontmatter.breakdown ?? {}) as Record<string, number>;
-      const confidence = typeof frontmatter.confidence === "number" ? frontmatter.confidence : 0.5;
+      // Prefer sources persisted in the frontmatter by /api/patterns/mine
+      // (derived from the evidence events) over the link-based lookup,
+      // which doesn't work for mined patterns.
+      const frontmatterSources = Array.isArray(frontmatter.sources)
+        ? (frontmatter.sources as string[]).filter((s) => typeof s === "string")
+        : null;
+      const linkBasedSources = [
+        ...new Set(pageTimeline.map((t) => t.source).filter(Boolean)),
+      ];
+      const pageSources = frontmatterSources ?? linkBasedSources;
 
       // Prefer steps stored in frontmatter (from PatternMiner) over link-derived steps
       const frontmatterSteps = Array.isArray(frontmatter.steps)
@@ -233,19 +240,15 @@ export async function listPatterns(limit = 20): Promise<
       }));
 
       const support = typeof frontmatter.support === "number" ? frontmatter.support : 0;
+      const breakdown = readBreakdown(frontmatter);
+      const compositeScore = readCompositeScore(frontmatter);
 
       return {
         id: page.slug,
         name: page.title,
         steps: frontmatterSteps ?? linkSteps,
-        compositeScore: Math.round(confidence * 100),
-        breakdown: {
-          frequency: support,
-          consistency: 0,
-          completionRate: 0,
-          automationPotential: 0,
-          ...breakdown,
-        },
+        compositeScore,
+        breakdown,
         frequency: support > 0 ? support : pageTimeline.length,
         lastSeen: page.updated_at ?? page.created_at ?? new Date().toISOString(),
         sources: pageSources.length > 0 ? pageSources : [],
@@ -255,6 +258,45 @@ export async function listPatterns(limit = 20): Promise<
   } catch {
     return [];
   }
+}
+
+/**
+ * Resolve a composite score from a brain_pages frontmatter blob.
+ *
+ * The mine route now writes a real 0..100 `compositeScore` field computed
+ * by PatternScorer. Older pages (seed workflows, pre-upgrade) only have
+ * `confidence: 0..1`. We prefer the real score and fall back to scaling
+ * confidence for backwards compat.
+ */
+function readCompositeScore(frontmatter: Record<string, unknown>): number {
+  if (typeof frontmatter.compositeScore === "number") {
+    return Math.round(frontmatter.compositeScore);
+  }
+  const confidence =
+    typeof frontmatter.confidence === "number" ? frontmatter.confidence : 0.5;
+  return Math.round(confidence * 100);
+}
+
+/**
+ * Normalise the 4-dimension breakdown from frontmatter. Fills in zeros
+ * for any missing dimension so the UI radar chart always has a full set
+ * of axes.
+ */
+function readBreakdown(frontmatter: Record<string, unknown>): {
+  frequency: number;
+  consistency: number;
+  completionRate: number;
+  automationPotential: number;
+} {
+  const raw = (frontmatter.breakdown ?? {}) as Record<string, unknown>;
+  const num = (k: string): number =>
+    typeof raw[k] === "number" ? (raw[k] as number) : 0;
+  return {
+    frequency: num("frequency"),
+    consistency: num("consistency"),
+    completionRate: num("completionRate"),
+    automationPotential: num("automationPotential"),
+  };
 }
 
 export async function getPattern(slug: string): Promise<{
@@ -299,28 +341,45 @@ export async function getPattern(slug: string): Promise<{
 
     const links = linksRes.data ?? [];
     const timeline = timelineRes.data ?? [];
-    const sources = [...new Set(timeline.map((t) => t.source).filter(Boolean))];
     const frontmatter = (page.frontmatter ?? {}) as Record<string, unknown>;
-    const breakdown = (frontmatter.breakdown ?? {}) as Record<string, number>;
-    const confidence = typeof frontmatter.confidence === "number" ? frontmatter.confidence : 0.5;
+    const frontmatterSources = Array.isArray(frontmatter.sources)
+      ? (frontmatter.sources as string[]).filter((s) => typeof s === "string")
+      : null;
+    const linkBasedSources = [
+      ...new Set(timeline.map((t) => t.source).filter(Boolean)),
+    ];
+    const sources = frontmatterSources ?? linkBasedSources;
+
+    // Prefer frontmatter.steps (mined patterns) over link-derived steps
+    // (legacy hand-authored workflow pages). Without this, mined pattern
+    // detail pages had empty step lists because nothing was writing
+    // brain_links rows for them.
+    const frontmatterSteps = Array.isArray(frontmatter.steps)
+      ? (frontmatter.steps as Array<{ eventType: string; position: number; sourceSystem: string | null }>).map(
+          (s) => ({
+            eventType: s.eventType,
+            position: s.position,
+            sourceSystem: s.sourceSystem ?? "",
+          }),
+        )
+      : null;
+
+    const linkSteps = links.map((link, pos) => ({
+      eventType: link.link_type,
+      position: pos,
+      sourceSystem: link.to_slug,
+    }));
 
     return {
       id: page.slug,
       name: page.title,
-      steps: links.map((link, pos) => ({
-        eventType: link.link_type,
-        position: pos,
-        sourceSystem: link.to_slug,
-      })),
-      compositeScore: Math.round(confidence * 100),
-      breakdown: {
-        frequency: 0,
-        consistency: 0,
-        completionRate: 0,
-        automationPotential: 0,
-        ...breakdown,
-      },
-      frequency: timeline.length,
+      steps: frontmatterSteps ?? linkSteps,
+      compositeScore: readCompositeScore(frontmatter),
+      breakdown: readBreakdown(frontmatter),
+      frequency:
+        typeof frontmatter.support === "number"
+          ? frontmatter.support
+          : timeline.length,
       lastSeen: page.updated_at ?? page.created_at ?? new Date().toISOString(),
       sources,
       evidence: [],
