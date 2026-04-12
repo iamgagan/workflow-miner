@@ -19,7 +19,9 @@
         "decorations": true,
         "fullscreen": false,
         "resizable": true,
-        "url": "index.html"
+        "url": "index.html",
+        "center": true,
+        "acceptFirstMouse": true
       }
     ],
     "security": {
@@ -48,11 +50,14 @@
       "exceptionDomain": "127.0.0.1",
       "signingIdentity": null,
       "providerShortName": null,
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "dmg": {
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 },
+        "windowSize": { "width": 660, "height": 400 }
+      }
     },
-    "resources": [
-      "../resources/next"
-    ]
+    "resources": ["../resources/next"]
   },
   "plugins": {
     "updater": {

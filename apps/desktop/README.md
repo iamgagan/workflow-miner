@@ -184,20 +184,97 @@ apps/desktop/
         └── oauth.rs                # Loopback OAuth listener
 ```
 
+## First-build checklist
+
+Run this once on a new Mac before you first try `pnpm desktop:dev`. Each
+line takes under a minute.
+
+```bash
+# 1. Validate the toolchain
+pnpm --filter @workflow-miner/desktop doctor
+
+# 2. Install deps (root of the repo)
+pnpm install
+
+# 3. Build the engine so @workflow-miner/engine is resolvable
+pnpm --filter @workflow-miner/engine build
+
+# 4. Configure Google OAuth
+cp apps/desktop/.env.example apps/desktop/.env.local
+$EDITOR apps/desktop/.env.local   # fill in GMAIL_CLIENT_ID + secret
+
+# 5. (Optional) Regenerate icons from the SVG master. The raster
+#     icons are already checked in, but if you swap source.svg you'll
+#     want to refresh the output.
+pnpm --filter @workflow-miner/desktop tauri icon src-tauri/icons/source.svg
+
+# 6. Sanity-check the Rust crate compiles
+cd apps/desktop/src-tauri
+cargo check
+cargo clippy --all-targets -- -D warnings
+
+# 7. Launch
+cd ../../..
+pnpm desktop:dev
+```
+
+The `pnpm --filter @workflow-miner/desktop doctor` command is your
+friend — it prints a colored checklist of what's installed, what's
+missing, and the exact command to fix each gap. Re-run it whenever
+something feels off.
+
 ## Troubleshooting
 
-**The window opens but stays on the splash screen.**
-The Next.js sidecar didn't start. Check the terminal you ran `pnpm desktop:dev`
-in for stack traces. Common causes: port 3000 collision (the shell picks a
-random free port, but if your env forces 3000 there can be a conflict), missing
-`pnpm install`, missing `apps/desktop/.env.local`.
+**The Rust crate fails to compile with a `resource path '../resources/next' doesn't exist` error.**
+The placeholder `apps/desktop/resources/next/.gitkeep` should prevent this,
+but if you've cleaned or never ran `pnpm install`, the directory may be
+missing. `mkdir -p apps/desktop/resources/next && touch apps/desktop/resources/next/.gitkeep`
+and re-run `cargo check`.
 
-**Google OAuth fails with "redirect_uri_mismatch".**
-Make sure the OAuth client in Google Cloud Console is type "Desktop
-application". Web application clients require the loopback URI to be
-pre-registered, which won't work with the random port the shell picks.
+**The window opens but stays on the splash screen.**
+The Next.js sidecar didn't start. Check the terminal you ran
+`pnpm desktop:dev` in for stack traces. Common causes:
+1. `pnpm install` wasn't run → `apps/web/node_modules/.bin/next` is missing.
+2. `packages/engine/dist/` is missing → run `pnpm --filter @workflow-miner/engine build`.
+3. A hard-coded `PORT=3000` env var forces a collision (the shell picks
+   a random free port, but if you override it the binding may fail).
+4. `apps/desktop/.env.local` is missing and the renderer can't find
+   `NEXT_PUBLIC_GMAIL_CLIENT_ID` — which breaks the Connectors page but
+   not the sidecar itself, so the splash should still transition.
+
+**Google OAuth fails with `redirect_uri_mismatch`.**
+Make sure the OAuth client in Google Cloud Console is type **Desktop
+application**, not Web application. Web clients require the loopback URI
+to be pre-registered, which won't work with the random port the shell
+picks. Desktop-type clients auto-accept `http://127.0.0.1:<any-port>`.
+
+**`cargo build` fails with `failed to open icon /.../32x32.png: No such file or directory`.**
+The raster icons are checked in, but if you cloned with a filter that
+skipped binary files (or deleted them) you'll need to regenerate them.
+The easiest fix: `pnpm --filter @workflow-miner/desktop tauri icon src-tauri/icons/source.svg`.
+Or, if you only need to unblock `cargo check` (not a bundle): use
+`rsvg-convert` + `png2icns` on Linux to regenerate from `source.svg`.
+
+**`cargo check` fails with `atk.pc` / `gdk-pixbuf-2.0.pc` not found on Linux.**
+Tauri on Linux uses WebKitGTK, which needs GTK system development headers.
+Install them with:
+
+```bash
+sudo apt-get install -y \
+  libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+  librsvg2-dev libsoup-3.0-dev libsecret-1-dev
+```
+
+Not needed on macOS — Tauri uses WebKit via `wry` without system headers.
 
 **`keyring` errors on Linux dev.**
-Linux uses libsecret/SecretService via D-Bus. On a headless dev VM there's
-no keyring backend. The desktop app is macOS-first; Linux dev is supported
-for editing code but not for the full keychain flow.
+Linux uses libsecret / SecretService via D-Bus. On a headless dev VM
+there's no keyring daemon running, so `keychain_set` / `keychain_get`
+errors out. The desktop app is macOS-first; Linux dev is supported for
+editing code and `cargo check` but not for the full keychain flow.
+
+**Notarization submission hangs or times out.**
+Apple's notary service is occasionally slow (10-30+ minutes). If it
+hangs past 30 minutes, check `xcrun notarytool info <submission-id>`
+for status. Transient network failures during submission also produce
+hangs — re-run `pnpm desktop:build:universal` once the network recovers.

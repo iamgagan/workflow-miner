@@ -92,9 +92,8 @@ pub fn run() {
 
                         // Navigate the main window to the loopback URL
                         if let Some(window) = app_handle.get_webview_window("main") {
-                            if let Err(err) = window.eval(&format!(
-                                "window.location.replace({:?});",
-                                url
+                            if let Err(err) = window.eval(format!(
+                                "window.location.replace({url:?});"
                             )) {
                                 log::error!("failed to redirect main window: {err}");
                             }
@@ -112,23 +111,33 @@ pub fn run() {
         .expect("error building tauri application")
         .run(|app_handle, event| match event {
             RunEvent::ExitRequested { .. } | RunEvent::Exit => {
-                let state = app_handle.state::<AppState>();
-                if let Some(mut sidecar) = state.sidecar.lock().unwrap().take() {
-                    let _ = sidecar.shutdown();
-                }
+                shutdown_sidecar(app_handle);
             }
             RunEvent::WindowEvent {
                 label: _,
                 event: WindowEvent::CloseRequested { .. },
                 ..
             } => {
-                let state = app_handle.state::<AppState>();
-                if let Some(mut sidecar) = state.sidecar.lock().unwrap().take() {
-                    let _ = sidecar.shutdown();
-                }
+                shutdown_sidecar(app_handle);
             }
             _ => {}
         });
+}
+
+/// Cleanly terminate the Next.js sidecar on exit / window close.
+///
+/// Factoring this out of the `run(|...|)` closure avoids a Rust drop-order
+/// snag: `state.sidecar.lock()` returns a temporary `MutexGuard` that
+/// outlives the `state` binding inside the closure arm, and the compiler
+/// complains that `state` doesn't live long enough. Inside a standalone
+/// function the guard is bound to a local before `state` goes out of
+/// scope, so the drop order is unambiguous.
+fn shutdown_sidecar(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<AppState>();
+    let mut guard = state.sidecar.lock().unwrap();
+    if let Some(mut sidecar) = guard.take() {
+        let _ = sidecar.shutdown();
+    }
 }
 
 mod commands {
@@ -137,41 +146,39 @@ mod commands {
 
     /// Return the loopback URL the Next.js sidecar is currently serving on.
     /// Returns `None` until the sidecar has finished booting.
+    ///
+    /// Note: binding the cloned value BEFORE the end of the block works
+    /// around the Rust drop-order rule where `state.server_url.lock()`
+    /// returns a temporary `MutexGuard` that outlives the `state` binding
+    /// — without the explicit `url` local the compiler complains that
+    /// `state` doesn't live long enough.
     #[tauri::command]
     pub fn server_url(app: AppHandle) -> Option<String> {
         let state = app.state::<AppState>();
-        state.server_url.lock().unwrap().clone()
+        let url = state.server_url.lock().unwrap().clone();
+        url
     }
 
-    /// Reveal the application data directory in Finder.
+    /// Reveal the application data directory in Finder (macOS) / Explorer
+    /// (Windows) / via `xdg-open` (Linux).
     #[tauri::command]
     pub fn open_data_dir(app: AppHandle) -> Result<(), String> {
         let dir = crate::sidecar::resolve_data_dir(&app).map_err(|e| e.to_string())?;
-        // tauri-plugin-shell exposes `open` for revealing paths in the OS file
-        // browser. We use the cross-platform `open` helper to launch Finder.
+
+        // Pick the platform-native reveal command so the whole function has
+        // a single tail expression (keeps clippy's needless_return check
+        // happy and keeps the conditional compilation obvious).
         #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("open")
-                .arg(&dir)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            return Ok(());
-        }
+        let program = "open";
         #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("explorer")
-                .arg(&dir)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            return Ok(());
-        }
+        let program = "explorer";
         #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            std::process::Command::new("xdg-open")
-                .arg(&dir)
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            return Ok(());
-        }
+        let program = "xdg-open";
+
+        std::process::Command::new(program)
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 }

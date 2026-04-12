@@ -13,15 +13,8 @@
 //! secret material itself.
 
 use keyring::Entry;
-use serde::{Deserialize, Serialize};
 
 const SERVICE_NAME: &str = "com.workflowminer.desktop";
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct StoredToken {
-    pub provider: String,
-    pub value: String,
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum TokenError {

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Workflow Miner desktop app icon. Regenerate raster outputs with:
+     rsvg-convert -w 32 -h 32 source.svg -o 32x32.png
+     (or use `tauri icon source.svg` which handles .icns / .ico too) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="nodeGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded-square background matching Apple's app icon grid -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+
+  <!-- Two source nodes on the left -->
+  <circle cx="300" cy="360" r="96" fill="url(#nodeGrad)"/>
+  <circle cx="300" cy="664" r="96" fill="url(#nodeGrad)"/>
+
+  <!-- Aggregator node on the right -->
+  <circle cx="736" cy="512" r="128" fill="#fafafa"/>
+  <circle cx="736" cy="512" r="64" fill="#0f172a"/>
+
+  <!-- Connecting edges -->
+  <path d="M 380 360 Q 560 360 640 472"
+        stroke="#fafafa" stroke-width="32" stroke-linecap="round"
+        fill="none" opacity="0.9"/>
+  <path d="M 380 664 Q 560 664 640 552"
+        stroke="#fafafa" stroke-width="32" stroke-linecap="round"
+        fill="none" opacity="0.9"/>
+</svg>

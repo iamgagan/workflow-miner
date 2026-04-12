@@ -2,7 +2,21 @@
 
 import { Suspense, useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
-import { Mail, Calendar, MessageSquare, GitBranch, RefreshCw, Plug } from "lucide-react";
+import {
+  Mail,
+  Calendar,
+  MessageSquare,
+  GitBranch,
+  RefreshCw,
+  Plug,
+  FileText,
+  Github,
+  Video,
+  Figma,
+  Inbox as InboxIcon,
+  ClipboardList,
+  ThumbsUp,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import type { ComponentType } from "react";
 import {
@@ -55,6 +69,92 @@ const connectors: ConnectorData[] = [
     connectLabel: "Connect Linear",
   },
 ];
+
+/**
+ * Curated list of connectors we want to build next. Rendered as disabled
+ * cards below the active grid so users can upvote the ones they want most.
+ * Upvotes persist in localStorage for now (no server round-trip) — this is
+ * an honest signal channel, not a vaporware roadmap.
+ *
+ * The list is intentionally short: six tools that thematically fit the
+ * workflow-miner positioning (work + productivity) and cover the most
+ * common install bases that the current four don't already serve.
+ */
+interface ComingSoonConnector {
+  readonly id: string;
+  readonly name: string;
+  readonly tagline: string;
+  readonly icon: ComponentType<{ className?: string }>;
+  readonly color: string;
+}
+
+const COMING_SOON_CONNECTORS: readonly ComingSoonConnector[] = [
+  {
+    id: "notion",
+    name: "Notion",
+    tagline: "Docs, wikis, project specs",
+    icon: FileText,
+    color: "#111827",
+  },
+  {
+    id: "github",
+    name: "GitHub",
+    tagline: "PRs, issues, commits, releases",
+    icon: Github,
+    color: "#24292f",
+  },
+  {
+    id: "jira",
+    name: "Jira",
+    tagline: "Sprints, tickets, releases (Linear alternative)",
+    icon: ClipboardList,
+    color: "#0052cc",
+  },
+  {
+    id: "zoom",
+    name: "Zoom",
+    tagline: "Meeting transcripts and recordings",
+    icon: Video,
+    color: "#2d8cff",
+  },
+  {
+    id: "outlook",
+    name: "Outlook",
+    tagline: "Email for Microsoft-shop teams",
+    icon: InboxIcon,
+    color: "#0078d4",
+  },
+  {
+    id: "figma",
+    name: "Figma",
+    tagline: "Design files, comments, reviews",
+    icon: Figma,
+    color: "#f24e1e",
+  },
+];
+
+const UPVOTE_STORAGE_KEY = "workflow-miner:connector-upvotes";
+
+function readUpvotes(): Record<string, boolean> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(UPVOTE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, boolean>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeUpvotes(upvotes: Record<string, boolean>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(UPVOTE_STORAGE_KEY, JSON.stringify(upvotes));
+  } catch {
+    /* quota exceeded or storage disabled — non-fatal */
+  }
+}
 
 const oauthButtonStyles: Record<string, string> = {
   google:
@@ -142,6 +242,23 @@ function ConnectorsContent() {
   // Tracks the id of an in-flight Google OAuth loopback listener so we can
   // cancel it when the user navigates away or hits Escape.
   const [pendingOauthId, setPendingOauthId] = useState<number | null>(null);
+  // Upvotes for coming-soon connectors (persisted in localStorage).
+  const [upvotes, setUpvotes] = useState<Record<string, boolean>>({});
+
+  // Hydrate upvotes from localStorage on mount. Runs only client-side so
+  // SSR doesn't try to read window.localStorage.
+  useEffect(() => {
+    setUpvotes(readUpvotes());
+  }, []);
+
+  const toggleUpvote = useCallback((id: string) => {
+    setUpvotes((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      if (!next[id]) delete next[id];
+      writeUpvotes(next);
+      return next;
+    });
+  }, []);
 
   // Cancel any in-flight OAuth listener when the page unmounts (e.g. user
   // navigates to /dashboard mid-flow). The Tauri shell would otherwise hold
@@ -487,6 +604,80 @@ function ConnectorsContent() {
               </motion.div>
             );
           })}
+        </div>
+      )}
+
+      {/* Coming-soon connectors — curated list of next-priority integrations.
+          Clicking upvotes and persists to localStorage so the user gets real
+          feedback on their intent. */}
+      {!loading && (
+        <div className="space-y-3 pt-2">
+          <div className="flex items-end justify-between">
+            <div>
+              <h2 className="font-display text-xl font-semibold tracking-tight">
+                Coming soon
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Upvote the integrations you want most. Your votes stay on this
+                Mac.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            {COMING_SOON_CONNECTORS.map((connector, index) => {
+              const Icon = connector.icon;
+              const upvoted = Boolean(upvotes[connector.id]);
+              return (
+                <motion.button
+                  key={connector.id}
+                  type="button"
+                  onClick={() => toggleUpvote(connector.id)}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.25, delay: 0.05 * index }}
+                  className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-all ${
+                    upvoted
+                      ? "border-primary/40 bg-primary/5 shadow-warm-card"
+                      : "border-dashed border-border/60 bg-muted/30 hover:border-border hover:bg-muted/60"
+                  }`}
+                  aria-pressed={upvoted}
+                >
+                  <div
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                    style={{ backgroundColor: connector.color + "1a" }}
+                  >
+                    <span style={{ color: connector.color }}>
+                      <Icon className="h-5 w-5" />
+                    </span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="truncate text-sm font-semibold">
+                        {connector.name}
+                      </h3>
+                      <span className="shrink-0 rounded-full border border-border bg-background/50 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">
+                        Soon
+                      </span>
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {connector.tagline}
+                    </p>
+                  </div>
+                  <div
+                    className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium transition-colors ${
+                      upvoted
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background/60 text-muted-foreground"
+                    }`}
+                    title={upvoted ? "Upvoted" : "Upvote"}
+                  >
+                    <ThumbsUp className="h-3 w-3" />
+                    {upvoted ? "Voted" : "Vote"}
+                  </div>
+                </motion.button>
+              );
+            })}
+          </div>
         </div>
       )}
 

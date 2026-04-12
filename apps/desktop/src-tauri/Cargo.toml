@@ -3,6 +3,7 @@ name = "workflow-miner-desktop"
 version = "0.1.0"
 description = "Workflow Miner macOS desktop shell"
 edition = "2021"
+# Rust 1.77 is the minimum for Tauri 2.x.
 rust-version = "1.77"
 
 [lib]
@@ -10,24 +11,39 @@ name = "workflow_miner_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2.0.6", features = [] }
 
 [dependencies]
-tauri = { version = "2.1", features = [] }
-tauri-plugin-shell = "2.0"
-tauri-plugin-dialog = "2.0"
-tauri-plugin-os = "2.0"
-tauri-plugin-process = "2.0"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "1"
-keyring = "3"
-once_cell = "1.19"
-portpicker = "0.1"
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
-dirs = "5"
-log = "0.4"
-env_logger = "0.11"
+# Tauri core + plugins. Minor versions are pinned to known-good Tauri 2.x
+# releases that have shipped stable APIs for the permission strings this
+# app references in capabilities/main.json.
+tauri = { version = "2.1.1", features = [] }
+tauri-plugin-shell = "2.0.2"
+tauri-plugin-dialog = "2.0.4"
+tauri-plugin-os = "2.0.1"
+tauri-plugin-process = "2.0.1"
+
+# Serialisation.
+serde = { version = "1.0.210", features = ["derive"] }
+serde_json = "1.0.128"
+thiserror = "1.0.64"
+
+# macOS Keychain (and libsecret / Windows Credential Manager on other
+# platforms via the same API). v3 renamed delete_password → delete_credential,
+# which is what src/tokens.rs calls.
+#
+# On Linux we enable the `sync-secret-service` feature which routes through
+# libsecret — useful for dev sanity on CI or a Linux build machine. On macOS
+# this feature is inert; the default backend is Security.framework.
+keyring = { version = "3.3.0", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+# In-memory OAuth loopback registry.
+once_cell = "1.19.0"
+portpicker = "0.1.1"
+tokio = { version = "1.40.0", features = ["rt", "rt-multi-thread", "time", "macros"] }
+dirs = "5.0.1"
+log = "0.4.22"
+env_logger = "0.11.5"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

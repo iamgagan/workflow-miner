@@ -9,7 +9,8 @@
     "build:universal": "tauri build --target universal-apple-darwin",
     "tauri": "tauri",
     "next:dev": "node scripts/run-next.mjs --dev",
-    "next:start": "node scripts/run-next.mjs"
+    "next:start": "node scripts/run-next.mjs",
+    "doctor": "node scripts/doctor.mjs"
   },
   "dependencies": {
     "@workflow-miner/engine": "workspace:*"
