@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowLeft, Clock, Hash, Layers, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Clock, Hash, Layers, Loader2, Trash2, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ const SOURCE_COLORS: Record<string, string> = {
   linear: "bg-blue-500/10 text-blue-600 border-blue-500/20",
   calendar: "bg-green-500/10 text-green-600 border-green-500/20",
 };
+
+type UserStatus = "confirmed" | "rejected" | "draft";
 
 interface PatternDetail {
   id: string;
@@ -35,6 +37,7 @@ interface PatternDetail {
   lastSeen: string;
   sources: string[];
   evidence: Array<Record<string, unknown>>;
+  userStatus?: UserStatus;
 }
 
 export default function PatternDetailPage() {
@@ -46,6 +49,31 @@ export default function PatternDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+
+  const handleStatusToggle = async (clicked: UserStatus) => {
+    if (!pattern) return;
+    // Clicking the active status resets to "draft"
+    const next: UserStatus = pattern.userStatus === clicked ? "draft" : clicked;
+    setStatusUpdating(true);
+    try {
+      const res = await fetch(`/api/patterns/${encodeURIComponent(pattern.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: next }),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        window.alert(`Status update failed: ${body}`);
+        return;
+      }
+      setPattern((prev) => prev ? { ...prev, userStatus: next } : prev);
+    } catch (err) {
+      window.alert(`Status update failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
 
   const handleDelete = async () => {
     if (!pattern) return;
@@ -155,17 +183,49 @@ export default function PatternDetailPage() {
             </div>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="shrink-0 text-muted-foreground hover:text-destructive"
-          onClick={handleDelete}
-          disabled={deleting}
-          title="Delete this pattern"
-        >
-          <Trash2 className="mr-1.5 h-4 w-4" />
-          {deleting ? "Deleting..." : "Delete"}
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant={pattern.userStatus === "confirmed" ? "default" : "ghost"}
+            size="sm"
+            className={
+              pattern.userStatus === "confirmed"
+                ? "bg-green-600 text-white hover:bg-green-700"
+                : "text-muted-foreground hover:text-green-600"
+            }
+            onClick={() => handleStatusToggle("confirmed")}
+            disabled={statusUpdating}
+            title={pattern.userStatus === "confirmed" ? "Click to reset to draft" : "Confirm this pattern"}
+          >
+            <Check className="mr-1.5 h-4 w-4" />
+            Confirm
+          </Button>
+          <Button
+            variant={pattern.userStatus === "rejected" ? "default" : "ghost"}
+            size="sm"
+            className={
+              pattern.userStatus === "rejected"
+                ? "bg-red-600 text-white hover:bg-red-700"
+                : "text-muted-foreground hover:text-red-600"
+            }
+            onClick={() => handleStatusToggle("rejected")}
+            disabled={statusUpdating}
+            title={pattern.userStatus === "rejected" ? "Click to reset to draft" : "Reject this pattern"}
+          >
+            <X className="mr-1.5 h-4 w-4" />
+            Reject
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground hover:text-destructive"
+            onClick={handleDelete}
+            disabled={deleting}
+            title="Delete this pattern"
+          >
+            <Trash2 className="mr-1.5 h-4 w-4" />
+            {deleting ? "Deleting..." : "Delete"}
+          </Button>
+        </div>
       </div>
 
       {/* Stats row */}

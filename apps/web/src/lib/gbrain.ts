@@ -164,6 +164,7 @@ export async function listPatterns(limit = 20): Promise<
     lastSeen: string;
     sources: string[];
     evidence: Array<Record<string, unknown>>;
+    userStatus: "confirmed" | "rejected" | "draft";
   }>
 > {
   try {
@@ -243,6 +244,8 @@ export async function listPatterns(limit = 20): Promise<
       const breakdown = readBreakdown(frontmatter);
       const compositeScore = readCompositeScore(frontmatter);
 
+      const userStatus = (frontmatter.userStatus as "confirmed" | "rejected" | "draft" | undefined) ?? "draft";
+
       return {
         id: page.slug,
         name: page.title,
@@ -253,6 +256,7 @@ export async function listPatterns(limit = 20): Promise<
         lastSeen: page.updated_at ?? page.created_at ?? new Date().toISOString(),
         sources: pageSources.length > 0 ? pageSources : [],
         evidence: [],
+        userStatus,
       };
     });
   } catch {

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  labelPatterns,
+  type EvidenceMap,
+  type EvidenceEvent,
+} from "@/lib/pattern-labeler";
+import {
   Sessionizer,
   PatternMiner,
   PatternScorer,
@@ -114,20 +119,10 @@ export async function POST() {
       };
     });
 
-    // 5. Run PatternMiner with minSupport: 2 for small datasets and a
-    //    conservative maxPatternLength so dense seed sessions don't
-    //    blow up into tens of thousands of subsequences. Real workflow
-    //    patterns are 2-6 steps; anything longer is signal-poor.
-    const miner = new PatternMiner({ minSupport: 2, maxPatternLength: 6 });
-    const allPatterns = miner.mine(sessionSequences);
-
-    // Cap how many patterns we persist. The miner already returns them
-    // sorted by support desc then length desc; take the top 50 so the
-    // dashboard / skills page stays focused on the most-supported flows.
-    const patterns = allPatterns.slice(0, 50);
-
     // Build a sessionId → events lookup so we can resolve evidence event IDs
     // AND reconstruct per-instance event sequences for the PatternScorer.
+    // This must live here (before mining) because the quality-gate filter
+    // below needs it to inspect source systems for each candidate pattern.
     const sessionEventsById = new Map<string, EventRow[]>();
     for (const session of sessions) {
       const events = eventRows.filter((e) =>
@@ -135,6 +130,63 @@ export async function POST() {
       );
       sessionEventsById.set(session.sessionId, events);
     }
+
+    // 5a. Entity-anchored sessionization: build a second set of sessions
+    //     grouped by shared entity anchors (Linear ticket IDs, Slack channels,
+    //     person names). On busy days temporal grouping can create mega-sessions
+    //     that make PrefixSpan explode combinatorially; entity sessions give the
+    //     miner tighter, semantically-coherent windows to work with.
+    const entitySessionSequences = buildEntitySessions(timelineEntries, eventRows);
+
+    // Merge temporal + entity sessions before mining so PrefixSpan sees both
+    // groupings. Duplicates are fine — support counting is additive.
+    const allSessionSequences = [...sessionSequences, ...entitySessionSequences];
+
+    // 5. Run PatternMiner with minSupport: 2 for small datasets and a
+    //    conservative maxPatternLength so dense seed sessions don't
+    //    blow up into tens of thousands of subsequences. Real workflow
+    //    patterns are 2-6 steps; anything longer is signal-poor.
+    const miner = new PatternMiner({ minSupport: 2, maxPatternLength: 6 });
+    const minedPatterns = miner.mine(allSessionSequences);
+
+    // Quality gates: keep only patterns that meet ALL three criteria so
+    // the persisted set contains meaningful cross-tool workflows rather
+    // than degenerate same-tool or same-type runs.
+    //   1. support >= 3  (stronger signal than the miner's minSupport: 2)
+    //   2. >= 2 distinct event types in the step sequence
+    //      (eliminates boring meeting → meeting → meeting runs)
+    //   3. evidence events span >= 2 distinct source systems
+    //      (ensures the pattern is genuinely cross-tool)
+    const allPatterns = minedPatterns.filter((pattern) => {
+      // Gate 1: support threshold
+      if (pattern.support < 3) return false;
+
+      // Gate 2: at least 2 distinct event types in steps
+      const distinctTypes = new Set(pattern.steps.map((s) => s.eventType));
+      if (distinctTypes.size < 2) return false;
+
+      // Gate 3: evidence events span >= 2 source systems.
+      // Resolve evidence IDs from the first matching session so we can
+      // inspect the underlying EventRow source_system fields directly.
+      const evidenceIds = collectEvidenceEventIds(
+        pattern.steps.map((s) => s.eventType),
+        pattern.exampleSessions,
+        sessionEventsById,
+      );
+      const sources = new Set<string>();
+      for (const id of evidenceIds) {
+        const evt = eventRows.find((e) => e.event_id === id);
+        if (evt?.source_system) sources.add(evt.source_system);
+      }
+      if (sources.size < 2) return false;
+
+      return true;
+    });
+
+    // Cap how many patterns we persist. The miner already returns them
+    // sorted by support desc then length desc; take the top 50 so the
+    // dashboard / skills page stays focused on the most-supported flows.
+    const patterns = allPatterns.slice(0, 50);
 
     // 5b. Score each mined pattern on the four dimensions the engine's
     //     PatternScorer exposes (frequency, consistency, completionRate,
@@ -180,6 +232,38 @@ export async function POST() {
       scoredById.set(scored.patternId, scored);
     }
 
+    // 5c. LLM-assisted pattern labeling: ask OpenRouter to generate
+    //     human-readable names ("Bug Report to Triage Escalation") and
+    //     one-sentence descriptions for each mined pattern. Fails
+    //     gracefully if OPEN_ROUTER_API_KEY is not set — the pattern
+    //     keeps its mechanically-generated name.
+    const evidenceMap: EvidenceMap = new Map();
+    for (const pattern of patterns) {
+      const eids = collectEvidenceEventIds(
+        pattern.steps.map((s) => s.eventType),
+        pattern.exampleSessions,
+        sessionEventsById,
+      );
+      const evidenceEvents: EvidenceEvent[] = eids
+        .map((id) => eventRows.find((e) => e.event_id === id))
+        .filter((e): e is EventRow => !!e)
+        .map((e) => ({
+          summary: e.content_text,
+          source: e.source_system,
+          timestamp: e.timestamp,
+        }));
+      evidenceMap.set(pattern.id, evidenceEvents);
+    }
+    const llmLabels = await labelPatterns(
+      patterns.map((p) => ({
+        id: p.id,
+        name: p.name,
+        steps: p.steps,
+        compositeScore: scoredById.get(p.id)?.compositeScore ?? 0,
+      })),
+      evidenceMap,
+    );
+
     // 6. Write/update brain_pages entries for each pattern. We also resolve
     //    a small set of "evidence event IDs" for each pattern: the actual
     //    timeline rows whose event_type sequence matched the pattern in the
@@ -222,13 +306,19 @@ export async function POST() {
         const compositeScore =
           scored?.compositeScore ?? Math.round(pattern.confidence * 100);
 
+        // Use the LLM-generated name if available, otherwise keep the
+        // mechanical event_type → event_type name from PrefixSpan.
+        const label = llmLabels.get(pattern.id);
+        const title = label?.name ?? pattern.name;
+        const llmDescription = label?.description ?? "";
+
         const { error: upsertError } = await supabase
           .from("brain_pages")
           .upsert(
             {
               slug,
               type: "workflow",
-              title: pattern.name,
+              title,
               frontmatter: {
                 // `confidence` stays 0..1 for backwards compat with the
                 // existing listPatterns/getPattern helpers; UI code that
@@ -242,6 +332,10 @@ export async function POST() {
                 exampleSessions: pattern.exampleSessions,
                 evidenceEventIds,
                 sources,
+                llmDescription,
+                // Raw step-based name kept for debugging / provenance.
+                rawPatternName: pattern.name,
+                userStatus: "draft",
                 minedAt: new Date().toISOString(),
               },
               updated_at: new Date().toISOString(),
@@ -257,7 +351,7 @@ export async function POST() {
 
     return NextResponse.json({
       patterns,
-      sessionsAnalyzed: sessionSequences.length,
+      sessionsAnalyzed: allSessionSequences.length,
       eventsProcessed: timelineEntries.length,
       patternsFound: patterns.length,
       persistedErrors: failedUpserts.length > 0 ? failedUpserts : undefined,
@@ -455,4 +549,121 @@ function slugify(name: string): string {
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Extract entity anchors from a timeline entry's summary text.
+ *
+ * Three anchor classes are recognised:
+ *   - Linear ticket IDs  e.g. "LIN-487"
+ *   - Slack channel names e.g. "#triage", "#eng-platform"
+ *   - Known person names  e.g. "Sarah Chen", "Marcus Johnson", "Alex Rivera"
+ *
+ * Returns a (possibly empty) array of normalised anchor strings.  Each anchor
+ * is lowercased so matching is case-insensitive.
+ */
+function extractEntityAnchors(summary: string | null): string[] {
+  if (!summary) return [];
+
+  const anchors: string[] = [];
+
+  // Linear ticket IDs: LIN- followed by one or more digits.
+  const ticketMatches = summary.matchAll(/\bLIN-(\d+)\b/gi);
+  for (const m of ticketMatches) {
+    anchors.push(`lin-${m[1]}`);
+  }
+
+  // Slack channel names: # followed by alphanumeric / hyphen characters.
+  const channelMatches = summary.matchAll(/#([a-z0-9][a-z0-9-]*)/gi);
+  for (const m of channelMatches) {
+    anchors.push(`#${m[1].toLowerCase()}`);
+  }
+
+  // Known person names.  The list is intentionally small and explicit so we
+  // don't accidentally anchor on common words that happen to be capitalised.
+  const knownPeople = [
+    "Sarah Chen",
+    "Marcus Johnson",
+    "Alex Rivera",
+  ];
+  for (const name of knownPeople) {
+    if (summary.includes(name)) {
+      anchors.push(`person:${name.toLowerCase().replace(/\s+/g, "-")}`);
+    }
+  }
+
+  return anchors;
+}
+
+/**
+ * Build entity-scoped SessionSequence[] from timeline entries.
+ *
+ * For each entity anchor that appears in two or more timeline entries, we
+ * create one SessionSequence containing all the events that reference that
+ * anchor (sorted by timestamp so PrefixSpan sees them in order).  Events with
+ * no anchors are ignored — they already appear in the temporal sessions.
+ *
+ * The entity session IDs are prefixed with "entity:" so they don't collide
+ * with temporal session IDs.
+ */
+function buildEntitySessions(
+  timelineEntries: Array<{
+    id: string;
+    date: string | null;
+    source: string | null;
+    summary: string | null;
+    created_at: string;
+  }>,
+  eventRows: EventRow[],
+): SessionSequence[] {
+  // Map each anchor → list of event_ids that reference it.
+  const anchorToEventIds = new Map<string, string[]>();
+
+  for (const entry of timelineEntries) {
+    const anchors = extractEntityAnchors(entry.summary);
+    for (const anchor of anchors) {
+      if (!anchorToEventIds.has(anchor)) {
+        anchorToEventIds.set(anchor, []);
+      }
+      anchorToEventIds.get(anchor)!.push(entry.id);
+    }
+  }
+
+  // Build a quick lookup from event_id → EventRow for O(1) access.
+  const eventById = new Map<string, EventRow>();
+  for (const row of eventRows) {
+    eventById.set(row.event_id, row);
+  }
+
+  const entitySequences: SessionSequence[] = [];
+
+  for (const [anchor, eventIds] of anchorToEventIds) {
+    // Skip singleton anchors — they can't form a multi-step sequence and
+    // would add noise to the support counts without any benefit.
+    if (eventIds.length < 2) continue;
+
+    // Resolve rows and sort by timestamp so PrefixSpan processes them in
+    // chronological order regardless of how they appeared in the DB result.
+    const rows = eventIds
+      .map((id) => eventById.get(id))
+      .filter((r): r is EventRow => r !== undefined)
+      .sort((a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      );
+
+    const events: SessionEvent[] = rows.map((r) => ({
+      eventType: r.event_type,
+      timestamp: r.timestamp,
+      sourceSystem: r.source_system,
+      actorId: r.actor_id,
+    }));
+
+    entitySequences.push({
+      // Slugify the anchor to produce a stable, readable session ID.
+      sessionId: `entity:${anchor.replace(/[^a-z0-9:-]/g, "-")}`,
+      events,
+    });
+  }
+
+  return entitySequences;
 }

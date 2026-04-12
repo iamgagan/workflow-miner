@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Search, SlidersHorizontal, Layers } from "lucide-react";
+import { Check, Search, SlidersHorizontal, Layers, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -164,7 +164,21 @@ export default function PatternsPage() {
           <motion.div layout className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <AnimatePresence mode="popLayout">
               {filtered.map((pattern) => (
-                <PatternCard key={pattern.id} pattern={pattern} />
+                <div key={pattern.id} className="relative">
+                  <PatternCard pattern={pattern} />
+                  {pattern.userStatus === "confirmed" && (
+                    <span className="pointer-events-none absolute right-3 top-3 flex items-center gap-0.5 rounded-full bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700 dark:bg-green-900/40 dark:text-green-400">
+                      <Check className="h-2.5 w-2.5" />
+                      Confirmed
+                    </span>
+                  )}
+                  {pattern.userStatus === "rejected" && (
+                    <span className="pointer-events-none absolute right-3 top-3 flex items-center gap-0.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/40 dark:text-red-400">
+                      <X className="h-2.5 w-2.5" />
+                      Rejected
+                    </span>
+                  )}
+                </div>
               ))}
             </AnimatePresence>
           </motion.div>

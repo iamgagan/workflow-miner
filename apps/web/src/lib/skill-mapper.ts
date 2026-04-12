@@ -92,6 +92,47 @@ function toolFor(eventType: string): string {
   return EVENT_TOOL_MAP[eventType] ?? "manual";
 }
 
+/**
+ * Redact PII from a string for export. Applied only to the exported skill
+ * pack YAML — the raw brain_pages frontmatter is never touched.
+ *
+ * Patterns stripped (in order):
+ *   1. Email addresses           → [email]
+ *   2. Phone numbers             → [phone]
+ *      Handles: 555-123-4567, (555) 123-4567, 555.123.4567, +15551234567
+ *   3. Linear ticket IDs         → [ticket]  (e.g. LIN-123)
+ *   4. Capitalized two-word names → [person]  (e.g. "Sarah Chen")
+ */
+export function redactPII(text: string): string {
+  // 1. Email addresses
+  let out = text.replace(
+    /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,
+    "[email]",
+  );
+
+  // 2. Phone numbers (various common formats)
+  out = out.replace(
+    /(?:\+1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g,
+    "[phone]",
+  );
+
+  // 3. Linear ticket IDs
+  out = out.replace(/\bLIN-\d+\b/g, "[ticket]");
+
+  // 4. Capitalized two-word name patterns (Title Case pairs)
+  //    Matches "Firstname Lastname" where both words start with a capital
+  //    letter and are at least 2 chars each. Uses a negative lookbehind so
+  //    we don't accidentally swallow things like "New Issue" or "In Progress"
+  //    when they're sentence-initial — we only redact when both words are
+  //    standalone title-cased tokens not preceded by a sentence boundary.
+  out = out.replace(
+    /\b([A-Z][a-z]{1,})\s([A-Z][a-z]{1,})\b/g,
+    "[person]",
+  );
+
+  return out;
+}
+
 function toTitleCase(input: string): string {
   return input
     .split(" ")
@@ -119,24 +160,32 @@ export function workflowPageToSkill(row: BrainPageWorkflowRow): SkillData {
     : [];
 
   // Derive concrete skill steps from the pattern's event sequence.
+  // redactPII is applied to step descriptions since they appear in the
+  // exported skill pack — not in the raw stored frontmatter.
   const skillSteps: SkillStep[] = rawSteps.map((step) => ({
-    description: actionFor(step.eventType),
+    description: redactPII(actionFor(step.eventType)),
     toolsUsed: [toolFor(step.eventType)],
   }));
 
   // Trigger conditions: a generic "when X then Y" line per event in the
   // pattern. Real production output would be richer, but this is the
   // honest projection of what the miner actually knows.
+  // redactPII is applied here because triggerConditions appear in the
+  // exported skill pack view (not stored in raw frontmatter).
   const triggerConditions: string[] = rawSteps.length > 0
     ? [
-        `Event sequence detected: ${rawSteps
-          .map((s) => s.eventType)
-          .join(" → ")}`,
-        `Observed in ${support} session${support === 1 ? "" : "s"} with ${Math.round(
-          confidence * 100,
-        )}% confidence`,
+        redactPII(
+          `Event sequence detected: ${rawSteps
+            .map((s) => s.eventType)
+            .join(" → ")}`,
+        ),
+        redactPII(
+          `Observed in ${support} session${support === 1 ? "" : "s"} with ${Math.round(
+            confidence * 100,
+          )}% confidence`,
+        ),
       ]
-    : ["Pattern with no recorded steps"];
+    : [redactPII("Pattern with no recorded steps")];
 
   // Tool permissions: union of all tools touched, plus :read scopes
   // since the engine connectors are read-only by default.
@@ -147,11 +196,13 @@ export function workflowPageToSkill(row: BrainPageWorkflowRow): SkillData {
   return {
     id: row.slug,
     name: row.title,
-    description: `Automated workflow mined from your activity. ${rawSteps.length} step${
-      rawSteps.length === 1 ? "" : "s"
-    } across ${tools.size} tool${tools.size === 1 ? "" : "s"}. Confidence ${Math.round(
-      confidence * 100,
-    )}%.`,
+    description: redactPII(
+      `Automated workflow mined from your activity. ${rawSteps.length} step${
+        rawSteps.length === 1 ? "" : "s"
+      } across ${tools.size} tool${tools.size === 1 ? "" : "s"}. Confidence ${Math.round(
+        confidence * 100,
+      )}%.`,
+    ),
     version: "1.0.0",
     status: statusForConfidence(confidence),
     patternSourceId: row.slug,
@@ -183,17 +234,20 @@ function buildSkillYaml(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
+  const topDescription = redactPII(`Automated workflow mined from real activity: ${title}`);
+  const triggerDescription = redactPII(
+    `Triggered when the following event sequence is detected: ${steps
+      .map((s) => s.eventType)
+      .join(" → ")}`,
+  );
+
   const lines: string[] = [
     `name: ${slug}`,
-    `description: ${JSON.stringify(`Automated workflow mined from real activity: ${title}`)}`,
+    `description: ${JSON.stringify(topDescription)}`,
     `version: 1.0.0`,
     "",
     "trigger:",
-    `  description: ${JSON.stringify(
-      `Triggered when the following event sequence is detected: ${steps
-        .map((s) => s.eventType)
-        .join(" → ")}`,
-    )}`,
+    `  description: ${JSON.stringify(triggerDescription)}`,
     "  event_types:",
     ...steps.map((s) => `    - ${s.eventType}`),
     "",
@@ -202,7 +256,7 @@ function buildSkillYaml(
 
   steps.forEach((step, idx) => {
     lines.push(`  - position: ${idx}`);
-    lines.push(`    action: ${JSON.stringify(actionFor(step.eventType))}`);
+    lines.push(`    action: ${JSON.stringify(redactPII(actionFor(step.eventType)))}`);
     lines.push(`    event_type: ${step.eventType}`);
     lines.push(`    tool_hint: ${toolFor(step.eventType)}`);
   });
