@@ -1,10 +1,35 @@
 import { NextResponse } from "next/server";
 import { render } from "@react-email/components";
+import { createTransport } from "nodemailer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isDesktopMode } from "@/lib/supabase/local-shim";
 import { WeeklyDigest } from "@/emails/weekly-digest";
 import { MOCK_DIGEST_DATA } from "@/emails/mock-digest-data";
 import type { WeeklyDigestProps, DigestPattern, NewPatternAlert, ExportReadyPattern } from "@/emails/weekly-digest";
+
+/**
+ * Send an email via SMTP if the required environment variables are set.
+ * Returns true if the email was sent, false if SMTP is not configured.
+ */
+async function sendDigestEmail(to: string, subject: string, html: string): Promise<boolean> {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.REPORT_FROM_EMAIL;
+
+  if (!host || !user || !pass || !from) return false;
+
+  const port = parseInt(process.env.SMTP_PORT ?? "587", 10);
+  const transport = createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+
+  await transport.sendMail({ from, to, subject, html });
+  return true;
+}
 
 function formatDate(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -140,11 +165,23 @@ export async function GET(request: Request) {
   const html = await render(WeeklyDigest(digestData));
 
   if (isCron) {
-    // Cron invocation — in production, send email via Resend/nodemailer here
+    const subject = `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`;
+    const recipient = process.env.REPORT_TO_EMAIL;
+    let sent = false;
+
+    if (recipient) {
+      try {
+        sent = await sendDigestEmail(recipient, subject, html);
+      } catch (err) {
+        console.error("[digest/cron] failed to send email:", err);
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       cron: true,
-      subject: `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`,
+      sent,
+      subject,
       htmlLength: html.length,
       source: digestData === MOCK_DIGEST_DATA ? "mock" : "brain",
     });
@@ -171,12 +208,24 @@ export async function POST(request: Request) {
   const digestData = (await buildDigestFromBrain()) ?? MOCK_DIGEST_DATA;
   const html = await render(WeeklyDigest(digestData));
 
-  // In production, send via Resend or nodemailer.
-  // For now, return the rendered HTML as confirmation.
+  const subject = `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`;
+  let sent = false;
+
+  try {
+    sent = await sendDigestEmail(to, subject, html);
+  } catch (err) {
+    console.error("[digest/POST] failed to send email:", err);
+    return NextResponse.json(
+      { error: "Failed to send email", detail: err instanceof Error ? err.message : String(err) },
+      { status: 502 },
+    );
+  }
+
   return NextResponse.json({
     ok: true,
+    sent,
     to,
-    subject: `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`,
+    subject,
     htmlLength: html.length,
     source: digestData === MOCK_DIGEST_DATA ? "mock" : "brain",
   });

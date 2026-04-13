@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
     "googleapis",
     "better-sqlite3",
     "@electric-sql/pglite",
+    "nodemailer",
   ],
 };
 
