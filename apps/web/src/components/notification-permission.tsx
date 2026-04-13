@@ -14,13 +14,28 @@ import { Switch } from "@/components/ui/switch";
 
 type PermissionState = "default" | "granted" | "denied" | "unsupported";
 
+/**
+ * Convert a URL-safe base64 VAPID public key to a Uint8Array for the
+ * Push API's `applicationServerKey` option.
+ */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+
+const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
+
 async function registerAndSubscribe(): Promise<PushSubscription | null> {
   const registration = await navigator.serviceWorker.register("/sw.js");
   await navigator.serviceWorker.ready;
 
   const subscription = await registration.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: new Uint8Array(65), // placeholder VAPID key
+    applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
   });
 
   await fetch("/api/notifications/subscribe", {
@@ -87,6 +102,22 @@ export function NotificationPermission() {
     },
     [subscription]
   );
+
+  if (!VAPID_PUBLIC_KEY) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Bell className="h-5 w-5" />
+            Coach Notifications
+          </CardTitle>
+          <CardDescription>
+            Push notifications are coming soon. Set <code className="text-xs">NEXT_PUBLIC_VAPID_PUBLIC_KEY</code> to enable.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
 
   if (permission === "unsupported") {
     return (
