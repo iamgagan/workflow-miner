@@ -6,8 +6,8 @@ import { ArrowRight } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScoreBadge } from "./score-badge";
-import type { PatternData } from "@/lib/mock-patterns";
-import { SOURCE_COLORS, EVENT_TYPE_LABELS } from "@/lib/mock-patterns";
+import type { PatternData } from "@/lib/pattern-types";
+import { SOURCE_COLORS, EVENT_TYPE_LABELS } from "@/lib/pattern-types";
 
 interface PatternCardProps {
   pattern: PatternData;

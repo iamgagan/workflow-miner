@@ -14,8 +14,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { PatternStep } from "@/lib/mock-patterns";
-import { EVENT_TYPE_LABELS, SOURCE_COLORS } from "@/lib/mock-patterns";
+import type { PatternStep } from "@/lib/pattern-types";
+import { EVENT_TYPE_LABELS, SOURCE_COLORS } from "@/lib/pattern-types";
 
 const EVENT_ICONS: Record<string, LucideIcon> = {
   message_sent: MessageSquare,

@@ -4,7 +4,6 @@ import { createTransport } from "nodemailer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isDesktopMode } from "@/lib/supabase/local-shim";
 import { WeeklyDigest } from "@/emails/weekly-digest";
-import { MOCK_DIGEST_DATA } from "@/emails/mock-digest-data";
 import type { WeeklyDigestProps, DigestPattern, NewPatternAlert, ExportReadyPattern } from "@/emails/weekly-digest";
 
 /**
@@ -160,8 +159,15 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const isCron = searchParams.get("cron") === "true";
 
-  // Build digest data from brain, fall back to mock
-  const digestData = (await buildDigestFromBrain()) ?? MOCK_DIGEST_DATA;
+  const digestData = await buildDigestFromBrain();
+
+  if (!digestData) {
+    if (isCron) {
+      return NextResponse.json({ ok: true, cron: true, sent: false, skipped: "no_data" });
+    }
+    return NextResponse.json({ error: "No digest data available. Sync some events first." }, { status: 404 });
+  }
+
   const html = await render(WeeklyDigest(digestData));
 
   if (isCron) {
@@ -177,14 +183,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({
-      ok: true,
-      cron: true,
-      sent,
-      subject,
-      htmlLength: html.length,
-      source: digestData === MOCK_DIGEST_DATA ? "mock" : "brain",
-    });
+    return NextResponse.json({ ok: true, cron: true, sent, subject, htmlLength: html.length });
   }
 
   // Non-cron GET — return rendered HTML for preview
@@ -204,10 +203,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // Build digest data from brain, fall back to mock
-  const digestData = (await buildDigestFromBrain()) ?? MOCK_DIGEST_DATA;
-  const html = await render(WeeklyDigest(digestData));
+  const digestData = await buildDigestFromBrain();
 
+  if (!digestData) {
+    return NextResponse.json({ error: "No digest data available. Sync some events first." }, { status: 404 });
+  }
+
+  const html = await render(WeeklyDigest(digestData));
   const subject = `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`;
   let sent = false;
 
@@ -221,12 +223,5 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({
-    ok: true,
-    sent,
-    to,
-    subject,
-    htmlLength: html.length,
-    source: digestData === MOCK_DIGEST_DATA ? "mock" : "brain",
-  });
+  return NextResponse.json({ ok: true, sent, to, subject, htmlLength: html.length });
 }

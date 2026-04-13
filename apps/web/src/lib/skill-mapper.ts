@@ -11,7 +11,7 @@
  * /api/skills/[id]/export (single download).
  */
 
-import type { SkillData, SkillStatus, SkillStep } from "./mock-skills";
+import type { SkillData, SkillStatus, SkillStep } from "./skill-types";
 
 interface BrainPageWorkflowRow {
   id: number;

@@ -9,7 +9,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from "recharts";
-import type { ScoreBreakdown } from "@/lib/mock-patterns";
+import type { ScoreBreakdown } from "@/lib/pattern-types";
 
 interface ScoreRadarProps {
   breakdown: ScoreBreakdown;

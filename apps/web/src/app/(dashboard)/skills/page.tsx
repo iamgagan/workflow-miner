@@ -12,7 +12,7 @@ import {
   STATUS_LABELS,
   type SkillData,
   type SkillStatus,
-} from "@/lib/mock-skills";
+} from "@/lib/skill-types";
 
 const FILTER_OPTIONS: readonly (SkillStatus | "all")[] = [
   "all",

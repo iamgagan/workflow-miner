@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { SkillData } from "@/lib/mock-skills";
+import type { SkillData } from "@/lib/skill-types";
 import { workflowPageToSkill } from "@/lib/skill-mapper";
 
 /**

@@ -4,8 +4,8 @@ import { motion } from "framer-motion";
 import { ArrowRight, Clock } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { SkillData } from "@/lib/mock-skills";
-import { STATUS_COLORS, STATUS_LABELS } from "@/lib/mock-skills";
+import type { SkillData } from "@/lib/skill-types";
+import { STATUS_COLORS, STATUS_LABELS } from "@/lib/skill-types";
 
 interface SkillCardProps {
   readonly skill: SkillData;
