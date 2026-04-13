@@ -148,7 +148,10 @@ export class SlackConnector implements ConnectorInterface {
       throw new Error("Missing SLACK_CHANNEL_IDS in credentials");
     }
 
-    const channels = channelIds.split(",").map((c) => c.trim());
+    const channels = channelIds.split(",").map((c) => c.trim()).filter(Boolean);
+    if (channels.length === 0) {
+      throw new Error("SLACK_CHANNEL_IDS contains no valid channel IDs");
+    }
     const userMap = await this.fetchUsers(token);
     const oldest = this.computeOldest(config.lookbackDays);
 

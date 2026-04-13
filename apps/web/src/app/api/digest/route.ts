@@ -19,6 +19,7 @@ async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
     if (!supabaseUrl || !anonKey) return null;
   }
 
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
   const supabase = createAdminClient();
 
   const now = new Date();
@@ -114,7 +115,7 @@ async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
       return {
         name: wf.title,
         confidence: Math.round(((fm.confidence as number) ?? 0) * 100),
-        exportUrl: `https://app.workflowminer.dev/patterns/${wf.slug.split("/").pop()}/export`,
+        exportUrl: `${baseUrl}/patterns/${wf.slug.split("/").pop()}/export`,
       };
     });
 
@@ -125,8 +126,8 @@ async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
     topPatterns,
     newPatterns,
     exportReady,
-    dashboardUrl: "https://app.workflowminer.dev/dashboard",
-    unsubscribeUrl: "https://app.workflowminer.dev/settings/notifications?unsubscribe=weekly",
+    dashboardUrl: `${baseUrl}/dashboard`,
+    unsubscribeUrl: `${baseUrl}/settings/notifications?unsubscribe=weekly`,
   };
 }
 

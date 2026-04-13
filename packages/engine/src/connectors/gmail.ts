@@ -115,7 +115,13 @@ function detectEventType(
   }
 
   const fromEmail = parseEmailAddress(message.from).email.toLowerCase();
-  if (fromEmail === userEmail.toLowerCase()) {
+  if (userEmail && fromEmail === userEmail.toLowerCase()) {
+    return "message_sent";
+  }
+
+  // Fallback: when GMAIL_USER_EMAIL is not configured, use the SENT label
+  // to distinguish sent from received messages.
+  if (!userEmail && message.labelIds.includes("SENT")) {
     return "message_sent";
   }
 

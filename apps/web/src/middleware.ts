@@ -6,7 +6,6 @@ const PUBLIC_ROUTES = ["/", "/login", "/signup", "/auth/callback"];
 
 function isPublicRoute(pathname: string): boolean {
   if (PUBLIC_ROUTES.includes(pathname)) return true;
-  if (pathname.startsWith("/api/admin/")) return true;
   if (pathname.startsWith("/api/cron/")) return true;
   if (pathname.startsWith("/api/connectors/")) return true;
   return false;
