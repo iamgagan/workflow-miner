@@ -5,20 +5,20 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * POST /api/connectors/manual-token
  *
  * Accepts a manually-entered API token for connectors that don't have an
- * OAuth flow (currently Slack bot tokens and Linear API keys) and persists
- * the credentials map into `connector_tokens.tokens` so the sync route's
- * `loadCredentials` resolver can find it on the next sync.
- *
- * The renderer is also expected to mirror the secret value into the macOS
- * Keychain via `keychainSet(provider, key, value)` for redundancy and so the
- * value is never readable from the database file in the clear (PGlite stores
- * JSONB as text on disk).
+ * OAuth flow and persists the credentials map into `connector_tokens.tokens`
+ * so the sync route's `loadCredentials` resolver can find it.
  *
  * Body shape:
  *   {
- *     "provider": "slack" | "linear",
- *     "token": "xoxb-..." | "lin_api_...",
- *     "channelIds"?: "C123,C456"      // slack only
+ *     "provider": "slack" | "linear" | "github" | "notion" | "jira" | "outlook",
+ *     "token": string,
+ *     "channelIds"?: string,   // slack — comma-separated
+ *     "repos"?: string,        // github — comma-separated owner/repo list
+ *     "email"?: string,        // jira — account email for basic auth
+ *     "domain"?: string,       // jira — e.g. "mycompany.atlassian.net"
+ *     "clientId"?: string,     // outlook — Azure app client ID
+ *     "clientSecret"?: string, // outlook — Azure app client secret
+ *     "tenantId"?: string,     // outlook — Azure AD tenant (defaults to "common")
  *   }
  */
 
@@ -26,6 +26,12 @@ interface ManualTokenRequest {
   provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
   token: string;
   channelIds?: string;
+  repos?: string;
+  email?: string;
+  domain?: string;
+  clientId?: string;
+  clientSecret?: string;
+  tenantId?: string;
 }
 
 const VALID_PROVIDERS: ReadonlyArray<ManualTokenRequest["provider"]> = [
@@ -63,7 +69,8 @@ export async function POST(request: NextRequest) {
   }
 
   // Build the credentials map in the shape that the engine connectors
-  // expect (see packages/engine/src/connectors/{slack,linear}.ts).
+  // expect. Providers with multi-field config (Jira, Outlook) require extra
+  // fields and return 400 if missing.
   const tokens: Record<string, string> = {};
   switch (body.provider) {
     case "slack":
@@ -75,15 +82,39 @@ export async function POST(request: NextRequest) {
       break;
     case "github":
       tokens.GITHUB_TOKEN = body.token;
+      if (!body.repos) {
+        return NextResponse.json(
+          { error: "missing_repos", detail: "GitHub requires 'repos' (comma-separated owner/repo list)" },
+          { status: 400 },
+        );
+      }
+      tokens.GITHUB_REPOS = body.repos;
       break;
     case "notion":
       tokens.NOTION_TOKEN = body.token;
       break;
     case "jira":
+      if (!body.email || !body.domain) {
+        return NextResponse.json(
+          { error: "missing_jira_fields", detail: "Jira requires 'email' and 'domain' fields" },
+          { status: 400 },
+        );
+      }
       tokens.JIRA_API_TOKEN = body.token;
+      tokens.JIRA_EMAIL = body.email;
+      tokens.JIRA_DOMAIN = body.domain;
       break;
     case "outlook":
+      if (!body.clientId || !body.clientSecret) {
+        return NextResponse.json(
+          { error: "missing_outlook_fields", detail: "Outlook requires 'clientId' and 'clientSecret' fields" },
+          { status: 400 },
+        );
+      }
       tokens.OUTLOOK_REFRESH_TOKEN = body.token;
+      tokens.OUTLOOK_CLIENT_ID = body.clientId;
+      tokens.OUTLOOK_CLIENT_SECRET = body.clientSecret;
+      tokens.OUTLOOK_TENANT_ID = body.tenantId ?? "common";
       break;
   }
 

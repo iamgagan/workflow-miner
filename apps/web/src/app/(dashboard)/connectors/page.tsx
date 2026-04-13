@@ -290,12 +290,16 @@ function ConnectorsContent() {
   }, [pendingOauthId]);
 
   const handleManualTokenSubmit = useCallback(
-    async (provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook", token: string, channelIds?: string) => {
+    async (
+      provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook",
+      token: string,
+      extras: Record<string, string> = {},
+    ) => {
       try {
         const res = await fetch("/api/connectors/manual-token", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, token, channelIds }),
+          body: JSON.stringify({ provider, token, ...extras }),
         });
         if (!res.ok) {
           const detail = await res.text();
@@ -696,28 +700,34 @@ function ConnectorsContent() {
   );
 }
 
+type ManualProvider = "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
+
 interface ManualTokenFormProps {
-  provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
+  provider: ManualProvider;
   onCancel: () => void;
   onSubmit: (
-    provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook",
+    provider: ManualProvider,
     token: string,
-    channelIds?: string,
+    extras?: Record<string, string>,
   ) => Promise<void>;
 }
 
 /**
- * Modal form for entering Slack bot tokens or Linear API keys.
+ * Modal form for entering manual API tokens.
  *
- * Both providers are manual-token (no OAuth flow) so the form is just a
- * couple of text fields. The submitted token is POSTed to
- * /api/connectors/manual-token, which persists it into the local PGlite
- * connector_tokens table; the renderer also mirrors it into the macOS
- * Keychain via `keychainSet` for redundancy.
+ * Providers with multi-field config (Jira, Outlook, GitHub) render the
+ * extra fields inline. The submitted token + extras are POSTed to
+ * /api/connectors/manual-token, which validates required fields per
+ * provider and persists them into connector_tokens.tokens.
  */
 function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps) {
   const [token, setToken] = useState("");
   const [channelIds, setChannelIds] = useState("");
+  const [repos, setRepos] = useState("");
+  const [email, setEmail] = useState("");
+  const [domain, setDomain] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -725,46 +735,59 @@ function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps)
     if (!token.trim()) return;
     setSubmitting(true);
     try {
-      await onSubmit(
-        provider,
-        token.trim(),
-        provider === "slack" ? channelIds.trim() || undefined : undefined,
-      );
+      const extras: Record<string, string> = {};
+      if (provider === "slack" && channelIds.trim()) extras.channelIds = channelIds.trim();
+      if (provider === "github" && repos.trim()) extras.repos = repos.trim();
+      if (provider === "jira") {
+        if (email.trim()) extras.email = email.trim();
+        if (domain.trim()) extras.domain = domain.trim();
+      }
+      if (provider === "outlook") {
+        if (clientId.trim()) extras.clientId = clientId.trim();
+        if (clientSecret.trim()) extras.clientSecret = clientSecret.trim();
+      }
+      await onSubmit(provider, token.trim(), extras);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const labels: Record<typeof provider, { title: string; placeholder: string; help: string }> = {
+  const labels: Record<ManualProvider, { title: string; placeholder: string; help: string; tokenLabel: string }> = {
     slack: {
       title: "Connect Slack",
       placeholder: "xoxb-...",
       help: "Create a Slack bot and paste its bot token.",
+      tokenLabel: "Bot token",
     },
     linear: {
       title: "Connect Linear",
       placeholder: "lin_api_...",
       help: "Generate a personal API key in Linear settings.",
+      tokenLabel: "API key",
     },
     github: {
       title: "Connect GitHub",
       placeholder: "ghp_...",
-      help: "Create a personal access token with repo scope. Set GITHUB_REPOS env var to owner/repo (comma-separated).",
+      help: "Create a personal access token with repo scope at github.com/settings/tokens.",
+      tokenLabel: "Personal access token",
     },
     notion: {
       title: "Connect Notion",
       placeholder: "ntn_...",
-      help: "Create an internal integration at notion.so/my-integrations and paste the token.",
+      help: "Create an internal integration at notion.so/my-integrations and share it with the pages you want to track.",
+      tokenLabel: "Integration token",
     },
     jira: {
       title: "Connect Jira",
       placeholder: "your-api-token",
-      help: "Create an API token at id.atlassian.com. Set JIRA_EMAIL and JIRA_DOMAIN env vars.",
+      help: "Create an API token at id.atlassian.com/manage-profile/security/api-tokens.",
+      tokenLabel: "API token",
     },
     outlook: {
       title: "Connect Outlook",
       placeholder: "refresh-token",
-      help: "Register an Azure AD app and provide OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET, and OUTLOOK_REFRESH_TOKEN env vars.",
+      help: "Register an Azure AD app and obtain a refresh token with Mail.Read + offline_access scopes.",
+      tokenLabel: "Refresh token",
     },
   };
   const labelInfo = labels[provider];
@@ -788,7 +811,7 @@ function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps)
 
         <div className="space-y-2">
           <label className="text-sm font-medium" htmlFor="token-input">
-            {provider === "slack" ? "Bot token" : "API key"}
+            {labelInfo.tokenLabel}
           </label>
           <input
             id="token-input"
@@ -818,6 +841,93 @@ function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps)
               className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
+        )}
+
+        {provider === "github" && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium" htmlFor="repos-input">
+              Repos (comma-separated owner/repo)
+            </label>
+            <input
+              id="repos-input"
+              type="text"
+              spellCheck={false}
+              value={repos}
+              onChange={(e) => setRepos(e.target.value)}
+              placeholder="facebook/react,vercel/next.js"
+              className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              required
+            />
+          </div>
+        )}
+
+        {provider === "jira" && (
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="jira-email-input">
+                Account email
+              </label>
+              <input
+                id="jira-email-input"
+                type="email"
+                spellCheck={false}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@company.com"
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="jira-domain-input">
+                Jira domain
+              </label>
+              <input
+                id="jira-domain-input"
+                type="text"
+                spellCheck={false}
+                value={domain}
+                onChange={(e) => setDomain(e.target.value)}
+                placeholder="mycompany.atlassian.net"
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+              />
+            </div>
+          </>
+        )}
+
+        {provider === "outlook" && (
+          <>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="outlook-client-id-input">
+                Azure Client ID
+              </label>
+              <input
+                id="outlook-client-id-input"
+                type="text"
+                spellCheck={false}
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="outlook-client-secret-input">
+                Azure Client Secret
+              </label>
+              <input
+                id="outlook-client-secret-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                required
+              />
+            </div>
+          </>
         )}
 
         <div className="flex items-center justify-end gap-2 pt-2">
