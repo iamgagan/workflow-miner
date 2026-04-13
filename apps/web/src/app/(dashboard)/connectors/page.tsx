@@ -31,7 +31,7 @@ interface ConnectorData {
   description: string;
   icon: ComponentType<{ className?: string }>;
   color: string;
-  oauthProvider: "google" | "slack" | "linear";
+  oauthProvider: "google" | "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
   connectLabel: string;
 }
 
@@ -68,6 +68,38 @@ const connectors: ConnectorData[] = [
     oauthProvider: "linear",
     connectLabel: "Connect Linear",
   },
+  {
+    name: "GitHub",
+    description: "PRs, issues, commits, and code reviews",
+    icon: Github,
+    color: "#24292f",
+    oauthProvider: "github" as ConnectorData["oauthProvider"],
+    connectLabel: "Connect GitHub",
+  },
+  {
+    name: "Notion",
+    description: "Docs, wikis, and project specs",
+    icon: FileText,
+    color: "#111827",
+    oauthProvider: "notion" as ConnectorData["oauthProvider"],
+    connectLabel: "Connect Notion",
+  },
+  {
+    name: "Jira",
+    description: "Sprints, tickets, and releases",
+    icon: ClipboardList,
+    color: "#0052cc",
+    oauthProvider: "jira" as ConnectorData["oauthProvider"],
+    connectLabel: "Connect Jira",
+  },
+  {
+    name: "Outlook",
+    description: "Email for Microsoft-shop teams",
+    icon: InboxIcon,
+    color: "#0078d4",
+    oauthProvider: "outlook" as ConnectorData["oauthProvider"],
+    connectLabel: "Connect Outlook",
+  },
 ];
 
 /**
@@ -90,39 +122,11 @@ interface ComingSoonConnector {
 
 const COMING_SOON_CONNECTORS: readonly ComingSoonConnector[] = [
   {
-    id: "notion",
-    name: "Notion",
-    tagline: "Docs, wikis, project specs",
-    icon: FileText,
-    color: "#111827",
-  },
-  {
-    id: "github",
-    name: "GitHub",
-    tagline: "PRs, issues, commits, releases",
-    icon: Github,
-    color: "#24292f",
-  },
-  {
-    id: "jira",
-    name: "Jira",
-    tagline: "Sprints, tickets, releases (Linear alternative)",
-    icon: ClipboardList,
-    color: "#0052cc",
-  },
-  {
     id: "zoom",
     name: "Zoom",
     tagline: "Meeting transcripts and recordings",
     icon: Video,
     color: "#2d8cff",
-  },
-  {
-    id: "outlook",
-    name: "Outlook",
-    tagline: "Email for Microsoft-shop teams",
-    icon: InboxIcon,
-    color: "#0078d4",
   },
   {
     id: "figma",
@@ -237,7 +241,7 @@ function ConnectorsContent() {
   const [statusMap, setStatusMap] = useState<Record<string, ConnectorStatus>>({});
   const [loading, setLoading] = useState(true);
   const [manualTokenProvider, setManualTokenProvider] = useState<
-    "slack" | "linear" | null
+    "slack" | "linear" | "github" | "notion" | "jira" | "outlook" | null
   >(null);
   // Tracks the id of an in-flight Google OAuth loopback listener so we can
   // cancel it when the user navigates away or hits Escape.
@@ -286,7 +290,7 @@ function ConnectorsContent() {
   }, [pendingOauthId]);
 
   const handleManualTokenSubmit = useCallback(
-    async (provider: "slack" | "linear", token: string, channelIds?: string) => {
+    async (provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook", token: string, channelIds?: string) => {
       try {
         const res = await fetch("/api/connectors/manual-token", {
           method: "POST",
@@ -693,10 +697,10 @@ function ConnectorsContent() {
 }
 
 interface ManualTokenFormProps {
-  provider: "slack" | "linear";
+  provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
   onCancel: () => void;
   onSubmit: (
-    provider: "slack" | "linear",
+    provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook",
     token: string,
     channelIds?: string,
   ) => Promise<void>;
@@ -735,12 +739,32 @@ function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps)
     slack: {
       title: "Connect Slack",
       placeholder: "xoxb-...",
-      help: "Create a Slack bot and paste its bot token. The token never leaves your Mac — it's stored in the macOS Keychain.",
+      help: "Create a Slack bot and paste its bot token.",
     },
     linear: {
       title: "Connect Linear",
       placeholder: "lin_api_...",
-      help: "Generate a personal API key in Linear's settings and paste it here. The key is stored in the macOS Keychain.",
+      help: "Generate a personal API key in Linear settings.",
+    },
+    github: {
+      title: "Connect GitHub",
+      placeholder: "ghp_...",
+      help: "Create a personal access token with repo scope. Set GITHUB_REPOS env var to owner/repo (comma-separated).",
+    },
+    notion: {
+      title: "Connect Notion",
+      placeholder: "ntn_...",
+      help: "Create an internal integration at notion.so/my-integrations and paste the token.",
+    },
+    jira: {
+      title: "Connect Jira",
+      placeholder: "your-api-token",
+      help: "Create an API token at id.atlassian.com. Set JIRA_EMAIL and JIRA_DOMAIN env vars.",
+    },
+    outlook: {
+      title: "Connect Outlook",
+      placeholder: "refresh-token",
+      help: "Register an Azure AD app and provide OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET, and OUTLOOK_REFRESH_TOKEN env vars.",
     },
   };
   const labelInfo = labels[provider];

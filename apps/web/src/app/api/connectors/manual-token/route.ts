@@ -23,7 +23,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
  */
 
 interface ManualTokenRequest {
-  provider: "slack" | "linear";
+  provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
   token: string;
   channelIds?: string;
 }
@@ -31,6 +31,10 @@ interface ManualTokenRequest {
 const VALID_PROVIDERS: ReadonlyArray<ManualTokenRequest["provider"]> = [
   "slack",
   "linear",
+  "github",
+  "notion",
+  "jira",
+  "outlook",
 ];
 
 export async function POST(request: NextRequest) {
@@ -68,6 +72,18 @@ export async function POST(request: NextRequest) {
       break;
     case "linear":
       tokens.LINEAR_API_KEY = body.token;
+      break;
+    case "github":
+      tokens.GITHUB_TOKEN = body.token;
+      break;
+    case "notion":
+      tokens.NOTION_TOKEN = body.token;
+      break;
+    case "jira":
+      tokens.JIRA_API_TOKEN = body.token;
+      break;
+    case "outlook":
+      tokens.OUTLOOK_REFRESH_TOKEN = body.token;
       break;
   }
 
@@ -108,7 +124,7 @@ export async function POST(request: NextRequest) {
  * fields are blanked so the next sync skips it. Google is allowed here too
  * even though its happy-path is OAuth — disconnecting drops the same row.
  */
-const DELETABLE_PROVIDERS = ["slack", "linear", "google"] as const;
+const DELETABLE_PROVIDERS = ["slack", "linear", "google", "github", "notion", "jira", "outlook"] as const;
 
 export async function DELETE(request: NextRequest) {
   const provider = new URL(request.url).searchParams.get("provider");

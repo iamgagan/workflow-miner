@@ -41,10 +41,14 @@ export type {
 
 // Connectors
 export {
-  GmailConnector,
-  SlackConnector,
-  LinearConnector,
   CalendarConnector,
+  GitHubConnector,
+  GmailConnector,
+  JiraConnector,
+  LinearConnector,
+  NotionConnector,
+  OutlookConnector,
+  SlackConnector,
 } from "./connectors/index.js";
 export type {
   RawEvent,

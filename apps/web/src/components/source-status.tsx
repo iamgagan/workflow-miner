@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Mail, MessageSquare, CheckCircle2, Calendar, Wifi, WifiOff, Loader2 } from "lucide-react";
+import { Mail, MessageSquare, CheckCircle2, Calendar, Github, FileText, ClipboardList, Inbox, Wifi, WifiOff, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { type LucideIcon } from "lucide-react";
@@ -30,6 +30,10 @@ const SOURCE_DEFS: Array<{ name: string; key: string; icon: LucideIcon }> = [
   { name: "Slack", key: "slack", icon: MessageSquare },
   { name: "Linear", key: "linear", icon: CheckCircle2 },
   { name: "Calendar", key: "calendar", icon: Calendar },
+  { name: "GitHub", key: "github", icon: Github },
+  { name: "Notion", key: "notion", icon: FileText },
+  { name: "Jira", key: "jira", icon: ClipboardList },
+  { name: "Outlook", key: "outlook", icon: Inbox },
 ];
 
 function relativeTime(dateString: string): string {

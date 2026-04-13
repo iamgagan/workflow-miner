@@ -13,9 +13,9 @@ type Engine = Awaited<ReturnType<typeof getEngine>>;
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-type SourceName = "gmail" | "calendar" | "slack" | "linear";
+type SourceName = "gmail" | "calendar" | "slack" | "linear" | "github" | "notion" | "jira" | "outlook";
 
-const ALL_SOURCES: readonly SourceName[] = ["gmail", "calendar", "slack", "linear"];
+const ALL_SOURCES: readonly SourceName[] = ["gmail", "calendar", "slack", "linear", "github", "notion", "jira", "outlook"];
 
 /**
  * GET /api/cron/sync-and-mine
@@ -261,31 +261,35 @@ async function loadCredentials(
         return { SLACK_BOT_TOKEN: refreshToken, SLACK_CHANNEL_IDS: env.SLACK_CHANNEL_IDS ?? "" };
       case "linear":
         return { LINEAR_API_KEY: refreshToken };
+      case "github":
+        return { GITHUB_TOKEN: refreshToken, GITHUB_REPOS: env.GITHUB_REPOS ?? "" };
+      case "notion":
+        return { NOTION_TOKEN: refreshToken };
+      case "jira":
+        return { JIRA_EMAIL: env.JIRA_EMAIL ?? "", JIRA_API_TOKEN: refreshToken, JIRA_DOMAIN: env.JIRA_DOMAIN ?? "" };
+      case "outlook":
+        return { OUTLOOK_CLIENT_ID: env.OUTLOOK_CLIENT_ID ?? "", OUTLOOK_CLIENT_SECRET: env.OUTLOOK_CLIENT_SECRET ?? "", OUTLOOK_REFRESH_TOKEN: refreshToken, OUTLOOK_TENANT_ID: env.OUTLOOK_TENANT_ID ?? "common", OUTLOOK_USER_EMAIL: env.OUTLOOK_USER_EMAIL ?? "" };
     }
   }
 
   // Path 3: Pure environment variables
   switch (source) {
     case "gmail":
-      return {
-        GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "",
-        GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET ?? "",
-        GMAIL_REFRESH_TOKEN: env.GMAIL_REFRESH_TOKEN ?? "",
-        GMAIL_USER_EMAIL: env.GMAIL_USER_EMAIL ?? "",
-      };
+      return { GMAIL_CLIENT_ID: env.GMAIL_CLIENT_ID ?? "", GMAIL_CLIENT_SECRET: env.GMAIL_CLIENT_SECRET ?? "", GMAIL_REFRESH_TOKEN: env.GMAIL_REFRESH_TOKEN ?? "", GMAIL_USER_EMAIL: env.GMAIL_USER_EMAIL ?? "" };
     case "calendar":
-      return {
-        CALENDAR_CLIENT_ID: env.CALENDAR_CLIENT_ID ?? "",
-        CALENDAR_CLIENT_SECRET: env.CALENDAR_CLIENT_SECRET ?? "",
-        CALENDAR_REFRESH_TOKEN: env.CALENDAR_REFRESH_TOKEN ?? "",
-      };
+      return { CALENDAR_CLIENT_ID: env.CALENDAR_CLIENT_ID ?? "", CALENDAR_CLIENT_SECRET: env.CALENDAR_CLIENT_SECRET ?? "", CALENDAR_REFRESH_TOKEN: env.CALENDAR_REFRESH_TOKEN ?? "" };
     case "slack":
-      return {
-        SLACK_BOT_TOKEN: env.SLACK_BOT_TOKEN ?? "",
-        SLACK_CHANNEL_IDS: env.SLACK_CHANNEL_IDS ?? "",
-      };
+      return { SLACK_BOT_TOKEN: env.SLACK_BOT_TOKEN ?? "", SLACK_CHANNEL_IDS: env.SLACK_CHANNEL_IDS ?? "" };
     case "linear":
       return { LINEAR_API_KEY: env.LINEAR_API_KEY ?? "" };
+    case "github":
+      return { GITHUB_TOKEN: env.GITHUB_TOKEN ?? "", GITHUB_REPOS: env.GITHUB_REPOS ?? "" };
+    case "notion":
+      return { NOTION_TOKEN: env.NOTION_TOKEN ?? "" };
+    case "jira":
+      return { JIRA_EMAIL: env.JIRA_EMAIL ?? "", JIRA_API_TOKEN: env.JIRA_API_TOKEN ?? "", JIRA_DOMAIN: env.JIRA_DOMAIN ?? "" };
+    case "outlook":
+      return { OUTLOOK_CLIENT_ID: env.OUTLOOK_CLIENT_ID ?? "", OUTLOOK_CLIENT_SECRET: env.OUTLOOK_CLIENT_SECRET ?? "", OUTLOOK_REFRESH_TOKEN: env.OUTLOOK_REFRESH_TOKEN ?? "", OUTLOOK_TENANT_ID: env.OUTLOOK_TENANT_ID ?? "common", OUTLOOK_USER_EMAIL: env.OUTLOOK_USER_EMAIL ?? "" };
   }
 }
 
@@ -302,6 +306,14 @@ function hasRequiredCredentials(
       return Boolean(credentials.SLACK_BOT_TOKEN);
     case "linear":
       return Boolean(credentials.LINEAR_API_KEY);
+    case "github":
+      return Boolean(credentials.GITHUB_TOKEN && credentials.GITHUB_REPOS);
+    case "notion":
+      return Boolean(credentials.NOTION_TOKEN);
+    case "jira":
+      return Boolean(credentials.JIRA_EMAIL && credentials.JIRA_API_TOKEN && credentials.JIRA_DOMAIN);
+    case "outlook":
+      return Boolean(credentials.OUTLOOK_CLIENT_ID && credentials.OUTLOOK_CLIENT_SECRET && credentials.OUTLOOK_REFRESH_TOKEN);
   }
 }
 
@@ -311,5 +323,9 @@ function createConnector(source: SourceName, engine: Engine) {
     case "calendar": return new engine.CalendarConnector();
     case "slack": return new engine.SlackConnector();
     case "linear": return new engine.LinearConnector();
+    case "github": return new engine.GitHubConnector();
+    case "notion": return new engine.NotionConnector();
+    case "jira": return new engine.JiraConnector();
+    case "outlook": return new engine.OutlookConnector();
   }
 }
