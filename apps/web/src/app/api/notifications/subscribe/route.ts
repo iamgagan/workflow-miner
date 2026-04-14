@@ -6,6 +6,9 @@ interface PushSubscriptionRecord {
   subscribedAt: string;
 }
 
+// Stub: in-memory storage until push notifications are fully wired up
+// (requires real VAPID keys and persistent storage).
+const MAX_SUBSCRIPTIONS = 1000;
 const subscriptions: PushSubscriptionRecord[] = [];
 
 export async function POST(request: Request) {
@@ -30,6 +33,11 @@ export async function POST(request: Request) {
 
     if (existing >= 0) {
       subscriptions[existing] = record;
+    } else if (subscriptions.length >= MAX_SUBSCRIPTIONS) {
+      return NextResponse.json(
+        { error: "Subscription limit reached" },
+        { status: 503 },
+      );
     } else {
       subscriptions.push(record);
     }

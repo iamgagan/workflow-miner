@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/sync-and-mine",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/digest?cron=true",
       "schedule": "0 9 * * 1"
     }

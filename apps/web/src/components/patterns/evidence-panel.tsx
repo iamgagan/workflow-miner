@@ -5,8 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronDown, ChevronRight, MessageSquare, Mail, CheckCircle2, AlertCircle, Calendar, FileText, Users, ArrowRightLeft, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import type { EvidenceEvent } from "@/lib/mock-patterns";
-import { SOURCE_COLORS } from "@/lib/mock-patterns";
+import type { EvidenceEvent } from "@/lib/pattern-types";
+import { SOURCE_COLORS } from "@/lib/pattern-types";
 
 const EVENT_ICONS: Record<string, LucideIcon> = {
   message_sent: MessageSquare,

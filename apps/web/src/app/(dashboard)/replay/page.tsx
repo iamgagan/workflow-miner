@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Play } from "lucide-react";
+import { Play, GitBranch, ArrowRight } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 
 export default function ReplayPage() {
   return (
@@ -16,19 +17,38 @@ export default function ReplayPage() {
         </p>
       </div>
 
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Play className="h-12 w-12 text-muted-foreground/30" />
-        <h2 className="font-display text-xl font-semibold mt-4">No workflows to replay</h2>
-        <p className="text-sm text-muted-foreground max-w-md mt-2">
-          Once you have connected tools and patterns are detected, you can replay workflow sequences here
-        </p>
-        <Link
-          href="/connectors"
-          className="mt-4 inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90"
-        >
-          Connect Tools
-        </Link>
-      </div>
+      <Card className="shadow-warm-card">
+        <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+            <Play className="h-8 w-8 text-primary" />
+          </div>
+          <h2 className="font-display text-xl font-semibold mt-6">
+            Replay is coming soon
+          </h2>
+          <p className="text-sm text-muted-foreground max-w-md mt-2">
+            Visual workflow replay will let you step through detected patterns
+            event by event, seeing how work flows across Gmail, Slack, Linear,
+            and Calendar.
+          </p>
+
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <Link
+              href="/patterns"
+              className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors hover:bg-muted"
+            >
+              <GitBranch className="h-4 w-4" />
+              View Patterns
+            </Link>
+            <Link
+              href="/connectors"
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Connect Tools
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

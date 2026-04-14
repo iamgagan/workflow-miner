@@ -165,7 +165,20 @@ export class LinearConnector implements ConnectorInterface {
       throw new Error(`Linear API error: HTTP ${response.status}`);
     }
 
-    return response.json();
+    const body = await response.json() as {
+      data?: unknown;
+      errors?: readonly { message: string }[];
+    };
+
+    if (body.errors && body.errors.length > 0) {
+      throw new Error(`Linear GraphQL error: ${body.errors[0].message}`);
+    }
+
+    if (!body.data) {
+      throw new Error("Linear GraphQL response missing data field");
+    }
+
+    return body;
   }
 
   private issueToRawEvents(issue: LinearIssueNode): readonly RawEvent[] {

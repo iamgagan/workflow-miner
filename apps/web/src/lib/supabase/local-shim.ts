@@ -44,6 +44,10 @@ type PGliteInstance = {
   ) => Promise<{ rows: T[]; affectedRows?: number }>;
   exec: (sql: string) => Promise<unknown>;
   close: () => Promise<void>;
+  /** Resolves when the WASM Postgres engine has finished initializing. */
+  waitReady?: Promise<void>;
+  /** In PGlite 0.2.x `ready` is a boolean indicating whether init completed. */
+  ready?: boolean;
 };
 
 // ── Schema ───────────────────────────────────────────────────────────
@@ -155,6 +159,21 @@ function resolveDataDir(): string {
   return path.join(xdg, "workflow-miner", "brain");
 }
 
+/**
+ * Error patterns emitted when PGlite's Emscripten-compiled WASM module hits a
+ * C-level assertion or memory fault. These are unrecoverable for the current
+ * instance — the only remedy is to tear it down and re-initialise.
+ */
+const WASM_CRASH_PATTERNS = [
+  "Aborted()",
+  "RuntimeError: unreachable",
+  "RuntimeError: memory access out of bounds",
+];
+
+function isWasmCrash(message: string): boolean {
+  return WASM_CRASH_PATTERNS.some((p) => message.includes(p));
+}
+
 async function bootDb(): Promise<PGliteInstance> {
   const dataDir = resolveDataDir();
   await fs.mkdir(dataDir, { recursive: true });
@@ -163,10 +182,43 @@ async function bootDb(): Promise<PGliteInstance> {
   const { PGlite } = (await import("@electric-sql/pglite")) as {
     PGlite: new (dataDir?: string) => PGliteInstance;
   };
-  const db = new PGlite(dataDir);
 
-  await db.exec(BRAIN_SCHEMA_SQL);
-  return db;
+  let db: PGliteInstance;
+  try {
+    db = new PGlite(dataDir);
+
+    // Wait for the WASM Postgres engine to finish booting before issuing any
+    // SQL.  PGlite 0.2.x exposes `waitReady` as a Promise that resolves once
+    // the internal Emscripten module is fully initialised; the constructor
+    // kicks off the async init internally but `exec`/`query` are NOT
+    // guaranteed to wait for it.
+    if (db.waitReady) await db.waitReady;
+
+    await db.exec(BRAIN_SCHEMA_SQL);
+    return db;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // If the WASM module crashed with a persistent-storage database, fall
+    // back to an ephemeral in-memory instance so the app remains usable.
+    if (isWasmCrash(message)) {
+      console.warn(
+        `[local-shim] PGlite WASM crashed with persistent storage (${dataDir}), retrying in-memory…`,
+      );
+      const memDb = new PGlite();
+      if (memDb.waitReady) await memDb.waitReady;
+      await memDb.exec(BRAIN_SCHEMA_SQL);
+      return memDb;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Reset the module-level PGlite singleton. Called when a WASM crash is
+ * detected so the next `getDb()` call re-runs `bootDb()`.
+ */
+function resetDb(): void {
+  dbPromise = null;
 }
 
 function getDb(): Promise<PGliteInstance> {
@@ -272,7 +324,7 @@ function onConflictClause(target: string | null): string {
  */
 class QueryBuilder<T = any> {
   private readonly state: QueryState;
-  private readonly db: Promise<PGliteInstance>;
+  private db: Promise<PGliteInstance>;
 
   constructor(table: string, db: Promise<PGliteInstance>) {
     this.db = db;
@@ -403,7 +455,7 @@ class QueryBuilder<T = any> {
     return this.execute<T[]>().then(onFulfilled, onRejected);
   }
 
-  private async execute<U>(): Promise<ShimResult<U>> {
+  private async execute<U>(retry = true): Promise<ShimResult<U>> {
     try {
       const db = await this.db;
       switch (this.state.op) {
@@ -418,6 +470,16 @@ class QueryBuilder<T = any> {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+
+      // If the WASM module crashed, discard the dead singleton and retry
+      // once with a freshly initialised PGlite instance.
+      if (isWasmCrash(message) && retry) {
+        console.warn("[local-shim] WASM crash detected, reinitialising PGlite…");
+        resetDb();
+        this.db = getDb();
+        return this.execute<U>(false);
+      }
+
       // Detect "relation does not exist" for parity with Supabase's 42P01 code
       const code = /does not exist/i.test(message) ? "42P01" : undefined;
       return { data: null, error: { message, code } };

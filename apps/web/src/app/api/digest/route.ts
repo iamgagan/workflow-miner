@@ -1,10 +1,34 @@
 import { NextResponse } from "next/server";
 import { render } from "@react-email/components";
+import { createTransport } from "nodemailer";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isDesktopMode } from "@/lib/supabase/local-shim";
 import { WeeklyDigest } from "@/emails/weekly-digest";
-import { MOCK_DIGEST_DATA } from "@/emails/mock-digest-data";
 import type { WeeklyDigestProps, DigestPattern, NewPatternAlert, ExportReadyPattern } from "@/emails/weekly-digest";
+
+/**
+ * Send an email via SMTP if the required environment variables are set.
+ * Returns true if the email was sent, false if SMTP is not configured.
+ */
+async function sendDigestEmail(to: string, subject: string, html: string): Promise<boolean> {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.REPORT_FROM_EMAIL;
+
+  if (!host || !user || !pass || !from) return false;
+
+  const port = parseInt(process.env.SMTP_PORT ?? "587", 10);
+  const transport = createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+  });
+
+  await transport.sendMail({ from, to, subject, html });
+  return true;
+}
 
 function formatDate(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -19,6 +43,7 @@ async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
     if (!supabaseUrl || !anonKey) return null;
   }
 
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
   const supabase = createAdminClient();
 
   const now = new Date();
@@ -114,7 +139,7 @@ async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
       return {
         name: wf.title,
         confidence: Math.round(((fm.confidence as number) ?? 0) * 100),
-        exportUrl: `https://app.workflowminer.dev/patterns/${wf.slug.split("/").pop()}/export`,
+        exportUrl: `${baseUrl}/patterns/${wf.slug.split("/").pop()}/export`,
       };
     });
 
@@ -125,8 +150,8 @@ async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
     topPatterns,
     newPatterns,
     exportReady,
-    dashboardUrl: "https://app.workflowminer.dev/dashboard",
-    unsubscribeUrl: "https://app.workflowminer.dev/settings/notifications?unsubscribe=weekly",
+    dashboardUrl: `${baseUrl}/dashboard`,
+    unsubscribeUrl: `${baseUrl}/settings/notifications?unsubscribe=weekly`,
   };
 }
 
@@ -134,19 +159,31 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const isCron = searchParams.get("cron") === "true";
 
-  // Build digest data from brain, fall back to mock
-  const digestData = (await buildDigestFromBrain()) ?? MOCK_DIGEST_DATA;
+  const digestData = await buildDigestFromBrain();
+
+  if (!digestData) {
+    if (isCron) {
+      return NextResponse.json({ ok: true, cron: true, sent: false, skipped: "no_data" });
+    }
+    return NextResponse.json({ error: "No digest data available. Sync some events first." }, { status: 404 });
+  }
+
   const html = await render(WeeklyDigest(digestData));
 
   if (isCron) {
-    // Cron invocation — in production, send email via Resend/nodemailer here
-    return NextResponse.json({
-      ok: true,
-      cron: true,
-      subject: `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`,
-      htmlLength: html.length,
-      source: digestData === MOCK_DIGEST_DATA ? "mock" : "brain",
-    });
+    const subject = `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`;
+    const recipient = process.env.REPORT_TO_EMAIL;
+    let sent = false;
+
+    if (recipient) {
+      try {
+        sent = await sendDigestEmail(recipient, subject, html);
+      } catch (err) {
+        console.error("[digest/cron] failed to send email:", err);
+      }
+    }
+
+    return NextResponse.json({ ok: true, cron: true, sent, subject, htmlLength: html.length });
   }
 
   // Non-cron GET — return rendered HTML for preview
@@ -166,17 +203,25 @@ export async function POST(request: Request) {
     );
   }
 
-  // Build digest data from brain, fall back to mock
-  const digestData = (await buildDigestFromBrain()) ?? MOCK_DIGEST_DATA;
-  const html = await render(WeeklyDigest(digestData));
+  const digestData = await buildDigestFromBrain();
 
-  // In production, send via Resend or nodemailer.
-  // For now, return the rendered HTML as confirmation.
-  return NextResponse.json({
-    ok: true,
-    to,
-    subject: `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`,
-    htmlLength: html.length,
-    source: digestData === MOCK_DIGEST_DATA ? "mock" : "brain",
-  });
+  if (!digestData) {
+    return NextResponse.json({ error: "No digest data available. Sync some events first." }, { status: 404 });
+  }
+
+  const html = await render(WeeklyDigest(digestData));
+  const subject = `Your Week in Patterns \u2014 ${digestData.weekStart} to ${digestData.weekEnd}`;
+  let sent = false;
+
+  try {
+    sent = await sendDigestEmail(to, subject, html);
+  } catch (err) {
+    console.error("[digest/POST] failed to send email:", err);
+    return NextResponse.json(
+      { error: "Failed to send email", detail: err instanceof Error ? err.message : String(err) },
+      { status: 502 },
+    );
+  }
+
+  return NextResponse.json({ ok: true, sent, to, subject, htmlLength: html.length });
 }

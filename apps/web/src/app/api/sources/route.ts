@@ -29,7 +29,7 @@ interface SourceStatus {
   eventCount: number;
 }
 
-const SOURCE_KEYS = ["gmail", "calendar", "slack", "linear"] as const;
+const SOURCE_KEYS = ["gmail", "calendar", "slack", "linear", "github", "notion", "jira", "outlook"] as const;
 type SourceKey = (typeof SOURCE_KEYS)[number];
 
 export async function GET() {

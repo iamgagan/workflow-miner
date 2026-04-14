@@ -11,8 +11,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { SkillData } from "@/lib/mock-skills";
-import { STATUS_COLORS, STATUS_LABELS } from "@/lib/mock-skills";
+import type { SkillData } from "@/lib/skill-types";
+import { STATUS_COLORS, STATUS_LABELS } from "@/lib/skill-types";
 
 interface SkillDetailProps {
   readonly skill: SkillData | null;
