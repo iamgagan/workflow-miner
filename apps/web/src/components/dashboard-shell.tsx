@@ -2,6 +2,7 @@
 
 import { TopNav } from "@/components/top-nav";
 import { WorkflowChat } from "@/components/workflow-chat";
+import { FeedbackWidget } from "@/components/feedback-widget";
 
 interface DashboardShellProps {
   email: string;
@@ -16,6 +17,7 @@ export function DashboardShell({ email, children }: DashboardShellProps) {
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">{children}</main>
         <WorkflowChat />
       </div>
+      <FeedbackWidget />
     </div>
   );
 }
