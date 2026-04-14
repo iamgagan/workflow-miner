@@ -38,6 +38,7 @@
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "nodemailer": "^8.0.5",
+    "@sentry/nextjs": "^8.47.0",
     "@workflow-miner/engine": "workspace:*"
   },
   "devDependencies": {
