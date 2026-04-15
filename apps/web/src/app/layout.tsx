@@ -11,7 +11,7 @@ const playfair = Playfair_Display({
 
 export const metadata: Metadata = {
   title: "Workflow Miner",
-  description: "Detect recurring workflow patterns and export them as deployable skill packs",
+  description: "Discover your team's real workflow patterns. Deploy them to Claude, n8n, Zapier, or any runtime.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

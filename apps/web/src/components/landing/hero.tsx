@@ -34,8 +34,9 @@ export function Hero() {
         </h1>
 
         <p className="mx-auto mt-8 max-w-2xl text-lg leading-relaxed text-muted-foreground sm:text-xl">
-          Workflow Miner watches your tools — calendar, Slack, GitHub — discovers
-          recurring patterns, and exports them as deployable skill packs.
+          The observability layer for AI automation. Workflow Miner watches
+          your tools, discovers the patterns your team actually repeats, and
+          exports them to Claude, n8n, Zapier — or any runtime you want.
         </p>
 
         <div className="mt-12 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">

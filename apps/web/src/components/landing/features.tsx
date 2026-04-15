@@ -24,7 +24,7 @@ const features: { icon: ReactNode; title: string; description: string; step: str
     title: "Deploy",
     step: "03",
     description:
-      "Export approved patterns as skill packs — ready-to-use AI agent instructions you can plug into Claude Code, Copilot, or your own tooling.",
+      "Export to Claude, n8n, Zapier, or generic JSON. One pattern, any runtime — Workflow Miner is the discovery layer, not another execution sandbox.",
   },
 ];
 
