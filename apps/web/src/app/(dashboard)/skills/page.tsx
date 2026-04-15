@@ -54,9 +54,15 @@ export default function SkillsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Sparkles className="h-6 w-6 text-accent" />
-        <h1 className="font-display text-3xl font-bold tracking-tight">Skills</h1>
+      <div>
+        <div className="flex items-center gap-3">
+          <Sparkles className="h-6 w-6 text-accent" />
+          <h1 className="font-display text-3xl font-bold tracking-tight">Skills</h1>
+        </div>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Export any discovered pattern to Claude, n8n, Zapier, or generic JSON.
+          One workflow, any runtime.
+        </p>
       </div>
 
       <div className={`flex flex-wrap gap-2 ${!hasData ? "opacity-40 pointer-events-none" : ""}`}>

@@ -141,20 +141,26 @@ export async function GET(request: NextRequest) {
 
         const scorer = new engine.PatternScorer();
         const scored = patterns.map((p: any) => {
+          // p.steps is PatternStep[] (objects with eventType/position/sourceSystem).
+          // The scorer's PatternCandidate wants EventType[] (flat strings), so we
+          // project here and keep the object shape for frontmatter writes below.
+          const stepTypes = p.steps.map((s: any) => s.eventType) as string[];
           const candidate = {
-            id: p.id ?? `pattern-${p.steps.join("-")}`,
-            name: p.steps.join(" \u2192 "),
-            steps: p.steps,
+            id: p.id ?? `pattern-${stepTypes.join("-")}`,
+            name: p.name ?? stepTypes.join(" \u2192 "),
+            steps: stepTypes,
             instances: p.exampleSessions.map(() => ({
-              eventTypes: p.steps,
+              eventTypes: stepTypes,
               completed: true,
             })),
           };
-          return { scored: scorer.score(candidate), candidate };
+          return { scored: scorer.score(candidate), candidate, rawSteps: p.steps };
         });
 
-        // Write patterns to brain as workflow pages
-        for (const { scored: s, candidate: c } of scored) {
+        // Write patterns to brain as workflow pages.
+        // Frontmatter.steps is the PatternStep[] object shape that the
+        // skill exporters + /api/skills/[id]/export expect to iterate over.
+        for (const { scored: s, candidate: c, rawSteps } of scored) {
           const slug = `workflows/${c.id}`;
           await supabase.from("brain_pages").upsert(
             {
@@ -163,9 +169,11 @@ export async function GET(request: NextRequest) {
               title: c.name,
               compiled_truth: `${c.steps.length}-step workflow detected ${c.instances.length} times`,
               frontmatter: {
-                confidence: s.compositeScore,
+                confidence: s.compositeScore / 100,
+                compositeScore: s.compositeScore,
                 breakdown: s.breakdown,
-                steps: c.steps,
+                support: c.instances.length,
+                steps: rawSteps,
                 frequency: c.instances.length,
               },
             },

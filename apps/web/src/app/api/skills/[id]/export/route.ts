@@ -1,16 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { workflowPageToSkill } from "@/lib/skill-mapper";
+import {
+  exportWorkflow,
+  isValidFormat,
+  FORMAT_META,
+  type ExportFormat,
+  type ExportableWorkflow,
+} from "@/lib/skill-exporters";
 
 /**
- * GET /api/skills/[id]/export
+ * GET /api/skills/[id]/export?format={claude|n8n|zapier|json}
  *
- * Compiles a single workflow pattern (identified by its brain_pages slug)
- * into a Claude skill-pack YAML and returns it as a downloadable file.
- * The renderer can `<a href={url} download>` or open in a new tab to save.
+ * Compiles a mined workflow pattern (by brain_pages slug) into the
+ * requested deployment target. Default is `claude` for backwards
+ * compatibility with earlier clients that didn't specify a format.
  *
- * The pattern itself lives in brain_pages with type='workflow' — see
- * /api/patterns/mine for how it gets there.
+ *   claude  → Claude skill pack YAML
+ *   n8n     → n8n workflow JSON (importable)
+ *   zapier  → Zapier Zap template JSON
+ *   json    → Generic runtime-agnostic JSON spec
  */
 export const runtime = "nodejs";
 
@@ -24,15 +32,22 @@ interface BrainPageRow {
   updated_at: string;
 }
 
+interface PatternStep {
+  eventType: string;
+  position: number;
+  sourceSystem?: string | null;
+}
+
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
-    // The id arrives URL-encoded (e.g. workflows%2Fbug-triage). Decode it
-    // back to the canonical slug shape stored in brain_pages.
     const slug = decodeURIComponent(id);
+
+    const requestedFormat = new URL(request.url).searchParams.get("format") ?? "claude";
+    const format: ExportFormat = isValidFormat(requestedFormat) ? requestedFormat : "claude";
 
     const supabase = createAdminClient();
     const result = await supabase
@@ -48,26 +63,39 @@ export async function GET(
       );
     }
 
-    const skill = workflowPageToSkill(result.data as BrainPageRow);
-    const filename = `${skill.id.replace(/[\/\\]/g, "-")}.skill.yaml`;
+    const row = result.data as BrainPageRow;
+    const frontmatter = (row.frontmatter ?? {}) as Record<string, unknown>;
+    const rawSteps = Array.isArray(frontmatter.steps) ? (frontmatter.steps as PatternStep[]) : [];
 
-    // Record the export so the dashboard "Skill Exports" stat reflects
-    // reality. Best-effort: a missing activity_log table just gets ignored.
+    const workflow: ExportableWorkflow = {
+      slug: row.slug,
+      title: row.title,
+      steps: rawSteps,
+      confidence: typeof frontmatter.confidence === "number" ? frontmatter.confidence : 0.5,
+      support: typeof frontmatter.support === "number" ? frontmatter.support : 0,
+    };
+
+    const body = exportWorkflow(workflow, format);
+    const { ext, mime } = FORMAT_META[format];
+    const baseName = row.slug.replace(/[\/\\]/g, "-");
+    const filename = `${baseName}.${ext}`;
+
+    // Record the export so the dashboard stat reflects reality
     try {
       await supabase.from("activity_log").insert({
         user_id: "local",
         source: "skills",
         type: "export",
-        description: `Exported skill pack: ${skill.name}`,
+        description: `Exported workflow (${format}): ${row.title}`,
       });
     } catch {
-      /* table may not exist on legacy hosted deployments */
+      /* activity_log may not exist on legacy deployments */
     }
 
-    return new NextResponse(skill.yaml, {
+    return new NextResponse(body, {
       status: 200,
       headers: {
-        "Content-Type": "application/x-yaml; charset=utf-8",
+        "Content-Type": mime,
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },

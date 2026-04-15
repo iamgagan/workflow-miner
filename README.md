@@ -1,8 +1,8 @@
 # Workflow Miner
 
-Detect recurring workflow patterns across Gmail, Slack, Linear, and Google Calendar. Export them as deployable Claude skill packs.
+**The observability layer for AI automation.** Workflow Miner discovers the workflow patterns your team actually repeats across Gmail, Slack, Linear, Google Calendar, GitHub, Notion, Jira, and Outlook — then exports each pattern to the runtime of your choice: **Claude, n8n, Zapier, or generic JSON**.
 
-Workflow Miner watches your daily work tools, identifies repeating sequences (bug triage flows, feature development pipelines, customer escalation paths), and surfaces them as actionable patterns with confidence scores.
+Most automation tools make you know what to build. Workflow Miner watches how you already work, finds the patterns you'd never write down, scores them by confidence and frequency, and lets you deploy them anywhere.
 
 It runs in two flavors:
 

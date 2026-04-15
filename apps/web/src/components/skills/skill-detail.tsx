@@ -20,6 +20,15 @@ interface SkillDetailProps {
   readonly onOpenChange: (open: boolean) => void;
 }
 
+type ExportFormat = "claude" | "n8n" | "zapier" | "json";
+
+const FORMAT_LABELS: Record<ExportFormat, string> = {
+  claude: "Claude skill",
+  n8n: "n8n workflow",
+  zapier: "Zapier template",
+  json: "Generic JSON",
+};
+
 export function SkillDetail({ skill, open, onOpenChange }: SkillDetailProps) {
   if (!skill) return null;
 
@@ -27,14 +36,15 @@ export function SkillDetail({ skill, open, onOpenChange }: SkillDetailProps) {
     await navigator.clipboard.writeText(skill.yaml);
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([skill.yaml], { type: "text/yaml" });
-    const url = URL.createObjectURL(blob);
+  const handleExport = (format: ExportFormat) => {
+    const encoded = encodeURIComponent(skill.id);
+    const url = `/api/skills/${encoded}/export?format=${format}`;
+    // Use a hidden anchor so the browser downloads with the server-provided
+    // Content-Disposition filename rather than opening inline.
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${skill.name.toLowerCase().replace(/\s+/g, "-")}.yaml`;
+    a.rel = "noopener";
     a.click();
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -156,18 +166,59 @@ export function SkillDetail({ skill, open, onOpenChange }: SkillDetailProps) {
           </div>
         </ScrollArea>
 
-        {/* Footer Actions — Download and Copy are always available so users
-            can grab the YAML for any pattern regardless of review status. */}
-        <div className="flex items-center gap-2 border-t border-border/50 px-6 py-4">
-          <Button size="sm" className="gap-1.5" onClick={handleDownload}>
-            <Download className="h-3.5 w-3.5" />
-            Download .yaml
-          </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={handleCopyYaml}>
-            <Copy className="h-3.5 w-3.5" />
-            Copy YAML
-          </Button>
-          <div className="flex-1" />
+        {/* Footer Actions — each pattern can be exported to any of 4 runtime
+            targets. Workflow Miner is the discovery layer; pick your runtime. */}
+        <div className="space-y-3 border-t border-border/50 px-6 py-4">
+          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            Deploy to any runtime
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => handleExport("claude")}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {FORMAT_LABELS.claude}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => handleExport("n8n")}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {FORMAT_LABELS.n8n}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => handleExport("zapier")}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {FORMAT_LABELS.zapier}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => handleExport("json")}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {FORMAT_LABELS.json}
+            </Button>
+            <div className="flex-1" />
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5"
+              onClick={handleCopyYaml}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy YAML
+            </Button>
+          </div>
           <span className="text-[10px] text-muted-foreground">
             ID: {skill.id}
           </span>
