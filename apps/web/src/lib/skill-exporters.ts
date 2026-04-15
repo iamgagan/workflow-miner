@@ -38,7 +38,12 @@ export const FORMAT_META: Record<ExportFormat, { ext: string; mime: string }> = 
   json: { ext: "workflow.json", mime: "application/json; charset=utf-8" },
 };
 
+// Event type → action/tool maps. Must stay in sync with the mirrored
+// maps in skill-mapper.ts (enforced by making skill-mapper delegate
+// to exportWorkflow("claude") so there's only one code path for YAML
+// generation; these maps are the authoritative source for all formats).
 const EVENT_ACTION_MAP: Record<string, string> = {
+  // Canonical event types.
   message_sent: "Send message",
   message_received: "Receive message",
   issue_created: "Create issue",
@@ -50,6 +55,7 @@ const EVENT_ACTION_MAP: Record<string, string> = {
   followup_assigned: "Assign follow-up",
   artifact_shared: "Share artifact",
   decision_made: "Record decision",
+  // Newer connector event types (GitHub, Notion).
   pr_opened: "Open pull request",
   pr_merged: "Merge pull request",
   review_submitted: "Submit review",
@@ -57,9 +63,20 @@ const EVENT_ACTION_MAP: Record<string, string> = {
   comment_added: "Add comment",
   doc_created: "Create document",
   doc_updated: "Update document",
+  // Synthetic types from the keyword resolver in /api/patterns/mine.
+  message_posted: "Post message in channel",
+  email_received: "Receive email",
+  email_replied: "Reply to email",
+  bug_reported: "Receive bug report",
+  issue_triaged: "Triage issue",
+  escalation_raised: "Raise escalation",
+  code_reviewed: "Review code",
+  code_deployed: "Deploy code",
+  doc_shared: "Share document",
 };
 
 const EVENT_TOOL_MAP: Record<string, string> = {
+  // Canonical event types.
   message_sent: "slack",
   message_received: "gmail",
   issue_created: "linear",
@@ -71,6 +88,7 @@ const EVENT_TOOL_MAP: Record<string, string> = {
   followup_assigned: "linear",
   artifact_shared: "slack",
   decision_made: "linear",
+  // Newer connector event types.
   pr_opened: "github",
   pr_merged: "github",
   review_submitted: "github",
@@ -78,6 +96,25 @@ const EVENT_TOOL_MAP: Record<string, string> = {
   comment_added: "linear",
   doc_created: "notion",
   doc_updated: "notion",
+  // Synthetic types from the keyword resolver.
+  message_posted: "slack",
+  email_received: "gmail",
+  email_replied: "gmail",
+  bug_reported: "linear",
+  issue_triaged: "linear",
+  escalation_raised: "linear",
+  code_reviewed: "slack",
+  code_deployed: "slack",
+  doc_shared: "slack",
+  // Bare source names (legacy fallback).
+  gmail: "gmail",
+  slack: "slack",
+  linear: "linear",
+  calendar: "calendar",
+  github: "github",
+  notion: "notion",
+  jira: "jira",
+  outlook: "outlook",
 };
 
 function actionFor(eventType: string): string {

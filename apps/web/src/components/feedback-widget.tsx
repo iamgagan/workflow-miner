@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { MessageCircle, X, Loader2, Check } from "lucide-react";
 
@@ -11,6 +11,18 @@ export function FeedbackWidget() {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<Status>("idle");
+
+  // Auto-dismiss 1.5s after a successful send. Using useEffect instead of
+  // a raw setTimeout inside the submit handler so the timer is cleaned up
+  // if the component unmounts before it fires.
+  useEffect(() => {
+    if (status !== "sent") return;
+    const timer = setTimeout(() => {
+      setOpen(false);
+      setStatus("idle");
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [status]);
 
   const submit = async () => {
     if (message.trim().length < 3) return;
@@ -24,10 +36,6 @@ export function FeedbackWidget() {
       if (!res.ok) throw new Error(await res.text());
       setStatus("sent");
       setMessage("");
-      setTimeout(() => {
-        setOpen(false);
-        setStatus("idle");
-      }, 1500);
     } catch {
       setStatus("error");
     }

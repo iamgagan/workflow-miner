@@ -12,6 +12,7 @@
  */
 
 import type { SkillData, SkillStatus, SkillStep } from "./skill-types";
+import { exportWorkflow, type ExportableWorkflow } from "./skill-exporters";
 
 interface BrainPageWorkflowRow {
   id: number;
@@ -29,19 +30,33 @@ interface PatternStep {
   sourceSystem?: string | null;
 }
 
-/** Maps event types to a human-readable action verb for skill steps. */
+/**
+ * Maps event types to a human-readable action verb for skill steps.
+ * Includes canonical types from the engine plus synthetic types from the
+ * keyword resolver in /api/patterns/mine and the newer connectors (GitHub,
+ * Notion, Jira, Outlook). Keep in sync with EVENT_TOOL_MAP below.
+ */
 const EVENT_ACTION_MAP: Record<string, string> = {
   // Canonical EventType enum values from the engine.
   message_sent: "Send message",
   message_received: "Receive message",
   issue_created: "Create issue",
   issue_updated: "Update issue",
+  issue_closed: "Close issue",
   meeting_scheduled: "Schedule meeting",
   meeting_held: "Hold meeting",
   meeting_cancelled: "Cancel meeting",
   followup_assigned: "Assign follow-up",
   artifact_shared: "Share artifact",
   decision_made: "Record decision",
+  // Newer connector event types (GitHub, Notion).
+  pr_opened: "Open pull request",
+  pr_merged: "Merge pull request",
+  review_submitted: "Submit review",
+  commit_pushed: "Push commit",
+  comment_added: "Add comment",
+  doc_created: "Create document",
+  doc_updated: "Update document",
   // Synthetic types produced by the keyword resolver in /api/patterns/mine.
   message_posted: "Post message in channel",
   email_received: "Receive email",
@@ -61,12 +76,21 @@ const EVENT_TOOL_MAP: Record<string, string> = {
   message_received: "gmail",
   issue_created: "linear",
   issue_updated: "linear",
+  issue_closed: "linear",
   meeting_scheduled: "calendar",
   meeting_held: "calendar",
   meeting_cancelled: "calendar",
   followup_assigned: "linear",
   artifact_shared: "slack",
   decision_made: "linear",
+  // Newer connector event types.
+  pr_opened: "github",
+  pr_merged: "github",
+  review_submitted: "github",
+  commit_pushed: "github",
+  comment_added: "linear",
+  doc_created: "notion",
+  doc_updated: "notion",
   // Synthetic types from the keyword resolver.
   message_posted: "slack",
   email_received: "gmail",
@@ -82,6 +106,10 @@ const EVENT_TOOL_MAP: Record<string, string> = {
   slack: "slack",
   linear: "linear",
   calendar: "calendar",
+  github: "github",
+  notion: "notion",
+  jira: "jira",
+  outlook: "outlook",
 };
 
 function actionFor(eventType: string): string {
@@ -217,11 +245,12 @@ export function workflowPageToSkill(row: BrainPageWorkflowRow): SkillData {
 }
 
 /**
- * Build a deployable Claude skill-pack YAML from a workflow pattern.
+ * Build the Claude skill-pack YAML shown in the UI preview.
  *
- * Output format mirrors the existing `SkillCompiler.metadataToYaml` shape
- * in the engine package, but inlined here so the web app doesn't need to
- * pull in the compiler module (which would balloon the API bundle).
+ * Delegates to `exportWorkflow(..., "claude")` in skill-exporters.ts so
+ * the preview and the actual download (`/api/skills/[id]/export?format=claude`)
+ * always produce identical output. There is only one source of truth for
+ * the Claude YAML shape.
  */
 function buildSkillYaml(
   title: string,
@@ -229,48 +258,15 @@ function buildSkillYaml(
   confidence: number,
   support: number,
 ): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-
-  const topDescription = redactPII(`Automated workflow mined from real activity: ${title}`);
-  const triggerDescription = redactPII(
-    `Triggered when the following event sequence is detected: ${steps
-      .map((s) => s.eventType)
-      .join(" → ")}`,
-  );
-
-  const lines: string[] = [
-    `name: ${slug}`,
-    `description: ${JSON.stringify(topDescription)}`,
-    `version: 1.0.0`,
-    "",
-    "trigger:",
-    `  description: ${JSON.stringify(triggerDescription)}`,
-    "  event_types:",
-    ...steps.map((s) => `    - ${s.eventType}`),
-    "",
-    "steps:",
-  ];
-
-  steps.forEach((step, idx) => {
-    lines.push(`  - position: ${idx}`);
-    lines.push(`    action: ${JSON.stringify(redactPII(actionFor(step.eventType)))}`);
-    lines.push(`    event_type: ${step.eventType}`);
-    lines.push(`    tool_hint: ${toolFor(step.eventType)}`);
-  });
-
-  lines.push("", "tools:");
-  const tools = new Set<string>();
-  for (const step of steps) tools.add(toolFor(step.eventType));
-  for (const t of tools) lines.push(`  - ${t}`);
-
-  lines.push("", "provenance:");
-  lines.push(`  pattern_id: ${slug}`);
-  lines.push(`  composite_score: ${Math.round(confidence * 100)}`);
-  lines.push(`  instance_count: ${support}`);
-  lines.push(`  exported_at: ${new Date().toISOString()}`);
-
-  return lines.join("\n") + "\n";
+  const workflow: ExportableWorkflow = {
+    slug: title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, ""),
+    title,
+    steps,
+    confidence,
+    support,
+  };
+  return exportWorkflow(workflow, "claude");
 }
