@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, Search, SlidersHorizontal, Layers, X } from "lucide-react";
+import { Check, Search, SlidersHorizontal, Layers, X, Pickaxe, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
@@ -29,8 +29,9 @@ export default function PatternsPage() {
   const [sortBy, setSortBy] = useState("score");
   const [patterns, setPatterns] = useState<any[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [mining, setMining] = useState(false);
 
-  useEffect(() => {
+  const loadPatterns = useCallback(() => {
     fetch("/api/patterns")
       .then((res) => res.ok ? res.json() : [])
       .then((data) => {
@@ -42,6 +43,18 @@ export default function PatternsPage() {
         setLoaded(true);
       });
   }, []);
+
+  useEffect(() => {
+    loadPatterns();
+  }, [loadPatterns]);
+
+  const handleMinePatterns = useCallback(() => {
+    setMining(true);
+    fetch("/api/patterns/mine", { method: "POST" })
+      .then(() => loadPatterns())
+      .catch((err) => console.error("Mining failed:", err))
+      .finally(() => setMining(false));
+  }, [loadPatterns]);
 
   const filtered = useMemo(() => {
     let result = [...patterns];
@@ -134,6 +147,15 @@ export default function PatternsPage() {
               ))}
             </SelectContent>
           </Select>
+
+          <button
+            onClick={handleMinePatterns}
+            disabled={mining}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90 disabled:opacity-50"
+          >
+            {mining ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pickaxe className="h-3.5 w-3.5" />}
+            {mining ? "Mining..." : "Mine Patterns"}
+          </button>
         </div>
       </div>
 
@@ -144,12 +166,22 @@ export default function PatternsPage() {
           <p className="text-sm text-muted-foreground max-w-md mt-2">
             Connect your tools and run your first ingest to discover workflow patterns
           </p>
-          <Link
-            href="/connectors"
-            className="mt-4 inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90"
-          >
-            Connect Tools
-          </Link>
+          <div className="mt-4 flex items-center gap-3">
+            <Link
+              href="/connectors"
+              className="inline-flex items-center rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent/90"
+            >
+              Connect Tools
+            </Link>
+            <button
+              onClick={handleMinePatterns}
+              disabled={mining}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-accent/30 px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/10 disabled:opacity-50"
+            >
+              {mining ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pickaxe className="h-3.5 w-3.5" />}
+              {mining ? "Mining..." : "Mine Patterns"}
+            </button>
+          </div>
         </div>
       )}
 

@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
           created_at: entry.date as string,
         }));
 
-        const sessionizer = new engine.Sessionizer({ gapThresholdMs: 4 * 60 * 60 * 1000 });
+        const sessionizer = new engine.Sessionizer({ gapThresholdMinutes: 4 * 60 });
         const sessions = sessionizer.groupEvents(eventRows);
 
         const sequences = sessions.map((s: any) => ({
@@ -136,16 +136,16 @@ export async function GET(request: NextRequest) {
           })),
         }));
 
-        const miner = new engine.PatternMiner();
-        const patterns = miner.mine(sequences, { minSupport: 2, minLength: 2, maxLength: 8 });
+        const miner = new engine.PatternMiner({ minSupport: 2, maxPatternLength: 8 });
+        const patterns = miner.mine(sequences);
 
         const scorer = new engine.PatternScorer();
-        const scored = patterns.map((p: any) => {
+        const candidates = patterns.map((p: any) => {
           // p.steps is PatternStep[] (objects with eventType/position/sourceSystem).
           // The scorer's PatternCandidate wants EventType[] (flat strings), so we
           // project here and keep the object shape for frontmatter writes below.
           const stepTypes = p.steps.map((s: any) => s.eventType) as string[];
-          const candidate = {
+          return {
             id: p.id ?? `pattern-${stepTypes.join("-")}`,
             name: p.name ?? stepTypes.join(" \u2192 "),
             steps: stepTypes,
@@ -153,9 +153,15 @@ export async function GET(request: NextRequest) {
               eventTypes: stepTypes,
               completed: true,
             })),
+            rawSteps: p.steps,
           };
-          return { scored: scorer.score(candidate), candidate, rawSteps: p.steps };
         });
+        const scoredResults = scorer.scoreAll(candidates as any);
+        const scored = candidates.map((c: any, i: number) => ({
+          scored: scoredResults[i],
+          candidate: c,
+          rawSteps: c.rawSteps,
+        }));
 
         // Write patterns to brain as workflow pages.
         // Frontmatter.steps is the PatternStep[] object shape that the

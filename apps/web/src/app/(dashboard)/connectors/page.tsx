@@ -361,11 +361,22 @@ function ConnectorsContent() {
   }, [searchParams]);
 
   const handleSync = useCallback((connectorName: string) => {
+    const SOURCE_NAME_MAP: Record<string, string> = {
+      "Gmail": "gmail",
+      "Google Calendar": "calendar",
+      "Slack": "slack",
+      "Linear": "linear",
+      "GitHub": "github",
+      "Notion": "notion",
+      "Jira": "jira",
+      "Outlook": "outlook",
+    };
     setSyncingMap((prev) => ({ ...prev, [connectorName]: true }));
-    // Call the sync endpoint (will be built by another agent)
-    const source = connectorName.toLowerCase().replace(/\s+/g, "_");
-    fetch(`/api/sync?source=${source}`)
+    const source = SOURCE_NAME_MAP[connectorName] ?? connectorName.toLowerCase();
+    fetch(`/api/sync?source=${source}`, { method: "POST" })
       .then(() => {
+        // Trigger pattern mining after successful sync
+        fetch("/api/patterns/mine", { method: "POST" }).catch(() => {});
         // Refresh status after sync
         return fetch("/api/connectors/status");
       })

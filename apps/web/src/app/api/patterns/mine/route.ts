@@ -149,6 +149,30 @@ export async function POST() {
     const miner = new PatternMiner({ minSupport: 2, maxPatternLength: 6 });
     const minedPatterns = miner.mine(allSessionSequences);
 
+    // --- Debug: collect diagnostics (non-production only) ---
+    const isDebug = process.env.NODE_ENV !== "production";
+    const debugDistinctEventTypes = isDebug
+      ? Array.from(new Set(eventRows.map((e) => e.event_type))).sort()
+      : undefined;
+    const debugSampleTimeline = isDebug
+      ? timelineEntries.slice(0, 10).map((e) => ({
+          id: e.id,
+          source: e.source,
+          summary: e.summary,
+          derivedType: deriveEventType(e.source, e.summary),
+        }))
+      : undefined;
+
+    // Track which gate filters out each pattern for debug output.
+    interface DebugFilteredPattern {
+      readonly name: string;
+      readonly support: number;
+      readonly steps: readonly string[];
+      readonly distinctTypeCount: number;
+      readonly gate: string;
+    }
+    const debugFilteredOut: DebugFilteredPattern[] = [];
+
     // Quality gates: keep only patterns that meet ALL three criteria so
     // the persisted set contains meaningful cross-tool workflows rather
     // than degenerate same-tool or same-type runs.
@@ -157,28 +181,73 @@ export async function POST() {
     //      (eliminates boring meeting → meeting → meeting runs)
     //   3. evidence events span >= 2 distinct source systems
     //      (ensures the pattern is genuinely cross-tool)
+    // Determine how many distinct sources exist in the full dataset.
+    // If only one source is connected, skip the cross-source requirement
+    // so single-source users still get patterns. Once they connect
+    // multiple tools, only cross-tool patterns are shown.
+    const allSources = new Set(eventRows.map((e) => e.source_system));
+    const requireCrossSource = allSources.size >= 2;
+
     const allPatterns = minedPatterns.filter((pattern) => {
+      const stepTypes = pattern.steps.map((s) => s.eventType);
+      const distinctTypes = new Set(stepTypes);
+
       // Gate 1: support threshold
-      if (pattern.support < 3) return false;
+      if (pattern.support < 3) {
+        if (isDebug) {
+          debugFilteredOut.push({
+            name: pattern.name,
+            support: pattern.support,
+            steps: stepTypes,
+            distinctTypeCount: distinctTypes.size,
+            gate: "gate1_support<3",
+          });
+        }
+        return false;
+      }
 
       // Gate 2: at least 2 distinct event types in steps
-      const distinctTypes = new Set(pattern.steps.map((s) => s.eventType));
-      if (distinctTypes.size < 2) return false;
+      if (distinctTypes.size < 2) {
+        if (isDebug) {
+          debugFilteredOut.push({
+            name: pattern.name,
+            support: pattern.support,
+            steps: stepTypes,
+            distinctTypeCount: distinctTypes.size,
+            gate: "gate2_singleEventType",
+          });
+        }
+        return false;
+      }
 
       // Gate 3: evidence events span >= 2 source systems.
+      // Only enforced when the dataset contains events from 2+ sources.
       // Resolve evidence IDs from the first matching session so we can
       // inspect the underlying EventRow source_system fields directly.
-      const evidenceIds = collectEvidenceEventIds(
-        pattern.steps.map((s) => s.eventType),
-        pattern.exampleSessions,
-        sessionEventsById,
-      );
-      const sources = new Set<string>();
-      for (const id of evidenceIds) {
-        const evt = eventRows.find((e) => e.event_id === id);
-        if (evt?.source_system) sources.add(evt.source_system);
+      if (requireCrossSource) {
+        const evidenceIds = collectEvidenceEventIds(
+          stepTypes,
+          pattern.exampleSessions,
+          sessionEventsById,
+        );
+        const sources = new Set<string>();
+        for (const id of evidenceIds) {
+          const evt = eventRows.find((e) => e.event_id === id);
+          if (evt?.source_system) sources.add(evt.source_system);
+        }
+        if (sources.size < 2) {
+          if (isDebug) {
+            debugFilteredOut.push({
+              name: pattern.name,
+              support: pattern.support,
+              steps: stepTypes,
+              distinctTypeCount: distinctTypes.size,
+              gate: `gate3_singleSource(${Array.from(sources).join(",")})`,
+            });
+          }
+          return false;
+        }
       }
-      if (sources.size < 2) return false;
 
       return true;
     });
@@ -349,12 +418,33 @@ export async function POST() {
 
     const failedUpserts = upsertResults.filter((r) => r.error !== null);
 
+    // Build debug payload for non-production environments.
+    const debugPayload = isDebug
+      ? {
+          rawPatternsFromMiner: minedPatterns.length,
+          distinctEventTypes: debugDistinctEventTypes,
+          sampleTimelineDerivations: debugSampleTimeline,
+          firstFiveUnfilteredPatterns: minedPatterns.slice(0, 5).map((p) => ({
+            name: p.name,
+            support: p.support,
+            steps: p.steps.map((s) => s.eventType),
+          })),
+          filteredOutPatterns: debugFilteredOut.slice(0, 20),
+          allSourceSystems: Array.from(allSources),
+          requireCrossSource,
+          sessionCount: allSessionSequences.length,
+          temporalSessionCount: sessionSequences.length,
+          entitySessionCount: entitySessionSequences.length,
+        }
+      : undefined;
+
     return NextResponse.json({
       patterns,
       sessionsAnalyzed: allSessionSequences.length,
       eventsProcessed: timelineEntries.length,
       patternsFound: patterns.length,
       persistedErrors: failedUpserts.length > 0 ? failedUpserts : undefined,
+      debug: debugPayload,
     });
   } catch (error) {
     const message =
@@ -385,19 +475,34 @@ function deriveEventType(
   source: string | null,
   summary: string | null,
 ): string {
-  const text = (summary ?? "").toLowerCase().trim();
+  const raw = (summary ?? "").trim();
+  const text = raw.toLowerCase();
+
+  // Step 0: Gmail thread structure signals. Real Gmail summaries are often
+  // email subject lines that start with "Re:", "Fwd:", or contain thread
+  // markers. These are strong structural signals that should produce
+  // distinct event types regardless of the topical content.
+  if (source?.toLowerCase() === "gmail" || /\bemail\b/.test(text)) {
+    // Forwarded emails — information sharing / escalation.
+    if (/^fwd:/i.test(raw) || /\bforwarded\b/.test(text))
+      return "email_forwarded";
+
+    // Reply threads — ongoing conversation.
+    if (/^re:/i.test(raw) || /\breply\b/.test(text) || /\breplied\b/.test(text))
+      return "email_replied";
+  }
 
   // Step 1: keyword extraction. Specific verbs and concrete actions win
   // over generic nouns so a single scenario produces a varied step
   // sequence instead of collapsing onto one bucket. Examples:
   //
-  //   "Bug report received from Sarah Chen"   → bug_reported
-  //   "Bug severity discussed in #triage"     → issue_triaged
-  //   "Bug ticket LIN-487 moved to In Progress" → issue_created
-  //   "Bug triage meeting with Sarah Chen"    → meeting_scheduled
+  //   "Bug report received from Sarah Chen"   -> bug_reported
+  //   "Bug severity discussed in #triage"     -> issue_triaged
+  //   "Bug ticket LIN-487 moved to In Progress" -> issue_updated
+  //   "Bug triage meeting with Sarah Chen"    -> meeting_scheduled
   //
   // Without this priority order, all four would match the generic "bug"
-  // keyword and the miner would surface degenerate `bug → bug → bug` runs.
+  // keyword and the miner would surface degenerate `bug -> bug -> bug` runs.
   if (text) {
     // Step 1A: action verbs that always win, regardless of topical noise.
     // These are "this event was a CREATE/POST/SEND/etc." signals.
@@ -422,12 +527,12 @@ function deriveEventType(
       return "email_replied";
 
     // Deploy / release / rollback.
-    if (/\b(deploy(ed)?|rollback|merged|released|shipped)\b/.test(text))
+    if (/\b(deploy(ed|ment)?|rollback|merged|released|shipped|release notes?)\b/.test(text))
       return "code_deployed";
 
-    // PR review / approve / reject.
+    // PR review / approve / reject / code review.
     if (
-      /\b(pr (review|merge)|pull request|review requested|approved|rejected|review feedback)\b/.test(
+      /\b(pr (review|merge)|pull request|review requested|approved|rejected|review feedback|code review|lgtm)\b/.test(
         text,
       )
     )
@@ -443,44 +548,94 @@ function deriveEventType(
     // matched, so a meeting that schedules a follow-up classifies as a
     // meeting and a chat message ABOUT a meeting classifies as a message.
 
-    // Meeting / calendar entries. Avoid the bare word "standup" so a
-    // downstream event mentioning a standup doesn't get reclassified as one.
-    if (/\b(meeting (held|scheduled|started)|1:?1|sync(ed)? up|call held|retrospective)\b/.test(text))
+    // Meeting / calendar entries — expanded to catch email meeting invites
+    // and common meeting-related subject patterns.
+    if (
+      /\b(meeting (held|scheduled|started|invite|notes|recap|minutes|cancelled|rescheduled)|1:?1|sync(ed)? up|call held|retrospective|standup|stand-up|kickoff|kick-off|huddle|check-?in meeting|office hours|all[- ]?hands|town[- ]?hall)\b/.test(
+        text,
+      )
+    )
+      return "meeting_scheduled";
+
+    // Invitation / calendar-style emails.
+    if (/\b(invit(e|ation|ed)|rsvp|calendar invite|agenda|you'?re invited)\b/.test(text))
       return "meeting_scheduled";
 
     // Triage / severity / assignment.
-    if (/\b(triag(e|ed)|severity|assigned to)\b/.test(text)) return "issue_triaged";
+    if (/\b(triag(e|ed)|severity|assigned to|assign(ed|ment))\b/.test(text))
+      return "issue_triaged";
 
     // Escalation: P0/P1 or "escalated to".
-    if (/\b(escalat(ion|ed)|p0|p1|urgent)\b/.test(text)) return "escalation_raised";
+    if (/\b(escalat(ion|ed)|p0|p1|urgent|critical|blocker|blocked)\b/.test(text))
+      return "escalation_raised";
 
-    // Followup / action item.
-    if (/\b(followup|follow-up|action item|next step)\b/.test(text))
+    // Followup / action item / recap / summary / digest.
+    if (/\b(followup|follow-up|follow up|action item|next step|recap|summary|digest|notes shared|takeaways)\b/.test(text))
       return "followup_assigned";
 
     // Decision recorded.
-    if (/\b(decision|decide(d)?|outcome|chose)\b/.test(text)) return "decision_made";
+    if (/\b(decision|decide(d)?|outcome|chose|sign-?off|go\/no-go|approved)\b/.test(text))
+      return "decision_made";
+
+    // Notification / automated emails — common in Gmail.
+    if (/\b(notification|automated|no-?reply|noreply|alert|monitoring|ci\/cd|build (failed|passed|succeeded)|pipeline)\b/.test(text))
+      return "notification_received";
+
+    // Request / ask — someone asking for something via email.
+    if (/\b(request(ed|ing)?|please review|can you|could you|need your|feedback needed|input needed|awaiting)\b/.test(text))
+      return "request_received";
+
+    // Sharing / FYI — information broadcast.
+    if (/\b(fyi|heads[- ]?up|sharing|shared|for your (info|review|reference)|attached|see attached|update on)\b/.test(text))
+      return "info_shared";
+
+    // Customer / client / external communication.
+    if (/\b(customer|client|vendor|partner|external|prospect|lead|onboarding|renewal|contract|invoice|quote|proposal sent)\b/.test(text))
+      return "customer_interaction";
+
+    // Scheduling / availability.
+    if (/\b(schedule|availab(le|ility)|time slot|book(ed)?|when can|free at|calendar)\b/.test(text))
+      return "scheduling_request";
 
     // Generic chat surface.
     if (/\b(slack|channel|thread|dm)\b/.test(text)) return "message_posted";
 
-    // Email — sent / received.
-    if (/\b(email received|email sent|inbox|email from|email to)\b/.test(text))
+    // Email — sent / received (broadened).
+    if (/\b(email received|email sent|inbox|email from|email to|received from|sent to)\b/.test(text))
       return "email_received";
 
     // Generic bug / incident — last resort.
-    if (/\b(bug|incident|outage|alert)\b/.test(text)) return "bug_reported";
+    if (/\b(bug|incident|outage|alert|error|crash|exception|failure)\b/.test(text))
+      return "bug_reported";
 
-    // Doc / spec / design.
-    if (/\b(spec|doc|design|proposal)\b/.test(text)) return "doc_shared";
+    // Doc / spec / design / wiki.
+    if (/\b(spec|doc(ument)?|design|proposal|wiki|confluence|readme|changelog)\b/.test(text))
+      return "doc_shared";
+
+    // Feature / product work.
+    if (/\b(feature|enhancement|improvement|roadmap|requirement|user story|epic)\b/.test(text))
+      return "feature_discussed";
+
+    // Approval / sign-off.
+    if (/\b(approv(e|ed|al)|sign[- ]?off|authorize|authoriz(e|ed))\b/.test(text))
+      return "approval_given";
+
+    // Onboarding / welcome.
+    if (/\b(welcome|onboard(ing)?|getting started|new (hire|member|employee))\b/.test(text))
+      return "onboarding_event";
   }
 
-  // Step 2: source-aware fallback. We avoid returning the bare source name
-  // because that gives the miner a degenerate single-letter alphabet.
+  // Step 2: source-aware fallback. For Gmail we try to differentiate
+  // new threads from replies based on structural cues in the raw summary,
+  // even when no keyword matched above.
   if (source) {
     switch (source.toLowerCase()) {
       case "gmail":
-        return "email_event";
+        // If we got here, no keyword matched. Distinguish new email vs.
+        // generic email based on length / structure heuristics.
+        // Short subjects (< 50 chars) with no "re:" are likely new threads.
+        if (raw.length > 0 && raw.length < 50) return "email_sent";
+        return "email_received";
       case "calendar":
         return "calendar_event";
       case "slack":

@@ -38,6 +38,14 @@ const WORKFLOW_PAGES = [
     frontmatter: {
       confidence: 0.87,
       breakdown: { frequency: 0.9, consistency: 0.8, completionRate: 0.85, automationPotential: 0.7 },
+      support: 7,
+      exampleSessions: [],
+      steps: [
+        { eventType: "bug_reported", position: 0, sourceSystem: "linear" },
+        { eventType: "issue_triaged", position: 1, sourceSystem: "linear" },
+        { eventType: "issue_updated", position: 2, sourceSystem: "linear" },
+        { eventType: "code_reviewed", position: 3, sourceSystem: "slack" },
+      ],
     },
   },
   {
@@ -47,6 +55,14 @@ const WORKFLOW_PAGES = [
     frontmatter: {
       confidence: 0.91,
       breakdown: { frequency: 0.7, consistency: 0.85, completionRate: 0.9, automationPotential: 0.6 },
+      support: 5,
+      exampleSessions: [],
+      steps: [
+        { eventType: "email_received", position: 0, sourceSystem: "gmail" },
+        { eventType: "escalation_raised", position: 1, sourceSystem: "linear" },
+        { eventType: "message_posted", position: 2, sourceSystem: "slack" },
+        { eventType: "followup_assigned", position: 3, sourceSystem: "linear" },
+      ],
     },
   },
   {
@@ -56,6 +72,14 @@ const WORKFLOW_PAGES = [
     frontmatter: {
       confidence: 0.82,
       breakdown: { frequency: 0.95, consistency: 0.75, completionRate: 0.8, automationPotential: 0.5 },
+      support: 8,
+      exampleSessions: [],
+      steps: [
+        { eventType: "meeting_scheduled", position: 0, sourceSystem: "calendar" },
+        { eventType: "meeting_held", position: 1, sourceSystem: "calendar" },
+        { eventType: "followup_assigned", position: 2, sourceSystem: "linear" },
+        { eventType: "issue_created", position: 3, sourceSystem: "linear" },
+      ],
     },
   },
   {
@@ -65,6 +89,18 @@ const WORKFLOW_PAGES = [
     frontmatter: {
       confidence: 0.78,
       breakdown: { frequency: 0.6, consistency: 0.7, completionRate: 0.75, automationPotential: 0.85 },
+      support: 4,
+      exampleSessions: [],
+      // pr_opened (github) anchors the "PR" origin; code_reviewed/code_deployed/
+      // message_posted all map to slack in EVENT_TOOL_MAP. Including pr_opened
+      // keeps the workflow honest to its "GitHub + Slack" scope and ensures
+      // toolPermissions covers both tools rather than collapsing to slack-only.
+      steps: [
+        { eventType: "pr_opened", position: 0, sourceSystem: "github" },
+        { eventType: "code_reviewed", position: 1, sourceSystem: "slack" },
+        { eventType: "code_deployed", position: 2, sourceSystem: "slack" },
+        { eventType: "message_posted", position: 3, sourceSystem: "slack" },
+      ],
     },
   },
   {
@@ -74,6 +110,14 @@ const WORKFLOW_PAGES = [
     frontmatter: {
       confidence: 0.73,
       breakdown: { frequency: 0.8, consistency: 0.65, completionRate: 0.7, automationPotential: 0.55 },
+      support: 6,
+      exampleSessions: [],
+      steps: [
+        { eventType: "meeting_held", position: 0, sourceSystem: "calendar" },
+        { eventType: "decision_made", position: 1, sourceSystem: "linear" },
+        { eventType: "followup_assigned", position: 2, sourceSystem: "linear" },
+        { eventType: "issue_created", position: 3, sourceSystem: "linear" },
+      ],
     },
   },
 ] as const;

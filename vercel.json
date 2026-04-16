@@ -1,0 +1,11 @@
+{
+  "buildCommand": "pnpm run build",
+  "outputDirectory": "apps/web/.next",
+  "installCommand": "pnpm install",
+  "crons": [
+    {
+      "path": "/api/digest?cron=true",
+      "schedule": "0 9 * * 1"
+    }
+  ]
+}
