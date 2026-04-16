@@ -4,7 +4,7 @@
   "private": true,
   "description": "Workflow Miner monorepo",
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm --filter=!@workflow-miner/desktop -r build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
     "desktop:dev": "pnpm --filter @workflow-miner/engine build && pnpm --filter @workflow-miner/desktop tauri dev",
