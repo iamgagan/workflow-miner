@@ -1,6 +1,4 @@
 {
-  "installCommand": "cd ../.. && corepack enable && pnpm install --frozen-lockfile",
-  "buildCommand": "cd ../.. && pnpm --filter web build",
   "crons": [
     {
       "path": "/api/cron/sync-and-mine",
