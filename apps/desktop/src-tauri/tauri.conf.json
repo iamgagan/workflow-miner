@@ -5,7 +5,7 @@
   "identifier": "com.workflowminer.desktop",
   "build": {
     "frontendDist": "../resources/splash",
-    "beforeBuildCommand": "node ../scripts/build-next.mjs"
+    "beforeBuildCommand": "node ./scripts/build-next.mjs"
   },
   "app": {
     "withGlobalTauri": true,
