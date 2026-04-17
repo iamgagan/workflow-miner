@@ -104,10 +104,10 @@ export default function PatternDetailPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`/api/patterns/${id}`).then((r) =>
+      fetch(`/api/patterns/${encodeURIComponent(id)}`).then((r) =>
         r.ok ? r.json() : null,
       ),
-      fetch(`/api/patterns/${id}/evidence`).then((r) =>
+      fetch(`/api/patterns/${encodeURIComponent(id)}/evidence`).then((r) =>
         r.ok ? r.json() : [],
       ),
     ])

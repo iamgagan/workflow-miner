@@ -16,7 +16,7 @@ interface PatternCardProps {
 export function PatternCard({ pattern }: PatternCardProps) {
   return (
     <motion.div layout animate={{ opacity: 1, scale: 1 }} initial={{ opacity: 0, scale: 0.95 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.2 }}>
-      <Link href={`/patterns/${pattern.id}`}>
+      <Link href={`/patterns/${encodeURIComponent(pattern.id)}`}>
         <Card className="group cursor-pointer border-border/50 bg-card/80 shadow-warm-card backdrop-blur transition-colors hover:border-border hover:bg-card">
           <CardHeader className="flex flex-row items-start gap-3 space-y-0 pb-3">
             <ScoreBadge score={pattern.compositeScore} />

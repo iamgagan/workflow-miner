@@ -8,6 +8,7 @@
     "beforeBuildCommand": "node ../scripts/build-next.mjs"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "main",
