@@ -394,39 +394,39 @@ function ConnectorsContent() {
 
   const handleOAuthConnect = useCallback(async (connector: ConnectorData) => {
     if (connector.oauthProvider === "google") {
-      // Desktop mode: use the two-step loopback flow so the redirect_uri is a
-      // 127.0.0.1 port owned by the Tauri shell, not a hosted domain.
-      if (isTauri()) {
-        const clientId = process.env.NEXT_PUBLIC_GMAIL_CLIENT_ID ?? "";
-        if (!clientId) {
-          setNotification(
-            "Google OAuth client ID is not configured. Set NEXT_PUBLIC_GMAIL_CLIENT_ID before launching the desktop app.",
-          );
-          return;
-        }
-        try {
-          setNotification("Waiting for Google authorization in your browser…");
-          await connectGoogleViaLoopback(clientId, {
-            onStart: (handle) => setPendingOauthId(handle.id),
-          });
-          setNotification("Successfully connected Google!");
-          const status = await fetch("/api/connectors/status").then((r) =>
-            r.json(),
-          );
-          setStatusMap(status.connectors ?? {});
-        } catch (err) {
-          console.error("desktop oauth flow failed", err);
-          setNotification(
-            err instanceof Error ? err.message : "Connection failed",
-          );
-        } finally {
-          setPendingOauthId(null);
-        }
+      // Desktop-only: Google OAuth requires the system browser + a 127.0.0.1
+      // loopback redirect (RFC 8252). Embedded webviews are blocked by Google.
+      if (!isTauri()) {
+        setNotification(
+          "Google sign-in only works inside the Workflow Miner desktop app.",
+        );
         return;
       }
-
-      // Hosted mode: redirect through our server-side authorize endpoint.
-      window.location.href = "/api/connectors/google/authorize";
+      const clientId = process.env.NEXT_PUBLIC_GMAIL_CLIENT_ID ?? "";
+      if (!clientId) {
+        setNotification(
+          "Google OAuth client ID is not configured. Set NEXT_PUBLIC_GMAIL_CLIENT_ID before launching the desktop app.",
+        );
+        return;
+      }
+      try {
+        setNotification("Waiting for Google authorization in your browser…");
+        await connectGoogleViaLoopback(clientId, {
+          onStart: (handle) => setPendingOauthId(handle.id),
+        });
+        setNotification("Successfully connected Google!");
+        const status = await fetch("/api/connectors/status").then((r) =>
+          r.json(),
+        );
+        setStatusMap(status.connectors ?? {});
+      } catch (err) {
+        console.error("desktop oauth flow failed", err);
+        setNotification(
+          err instanceof Error ? err.message : "Connection failed",
+        );
+      } finally {
+        setPendingOauthId(null);
+      }
       return;
     }
 
@@ -865,7 +865,7 @@ function ManualTokenForm({ provider, onCancel, onSubmit }: ManualTokenFormProps)
               spellCheck={false}
               value={repos}
               onChange={(e) => setRepos(e.target.value)}
-              placeholder="facebook/react,vercel/next.js"
+              placeholder="facebook/react,microsoft/TypeScript"
               className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               required
             />

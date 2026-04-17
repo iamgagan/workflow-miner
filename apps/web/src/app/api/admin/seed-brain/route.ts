@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isDesktopMode } from "@/lib/supabase/local-shim";
 
 /**
  * Build an ISO timestamp `daysBack` days before now, offset by `hour:minute`
@@ -234,17 +233,6 @@ const LINKS: ReadonlyArray<{
 ];
 
 export async function POST() {
-  if (!isDesktopMode()) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !anonKey) {
-      return NextResponse.json(
-        { error: "Missing Supabase credentials" },
-        { status: 500 },
-      );
-    }
-  }
-
   const supabase = createAdminClient();
 
   try {

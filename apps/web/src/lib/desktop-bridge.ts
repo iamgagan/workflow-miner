@@ -207,11 +207,13 @@ export async function connectGoogleViaLoopback(
   const handle = await oauthLoopbackStart();
   options.onStart?.(handle);
 
-  // 2 + 3. Build the authorize URL and open it in the system browser.
+  // 2 + 3. Build the authorize URL and open it in the SYSTEM browser.
+  // Google blocks OAuth in embedded webviews (WKWebView shows "Something went
+  // wrong / Make sure Bluetooth is on"), so we must escape the Tauri window.
+  // `window.open(url, "_blank")` would open inside the webview; the Tauri
+  // shell plugin's `open` command punts to the OS default handler instead.
   const authorizeUrl = buildGoogleAuthorizeUrl(clientId, handle.redirectUri);
-  if (typeof window !== "undefined") {
-    window.open(authorizeUrl, "_blank");
-  }
+  await invoke<void>("plugin:shell|open", { path: authorizeUrl });
 
   // 4. Wait for the redirect.
   const result = await oauthLoopbackWait(handle, options.timeoutSecs ?? 300);

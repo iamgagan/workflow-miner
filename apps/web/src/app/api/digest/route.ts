@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { render } from "@react-email/components";
 import { createTransport } from "nodemailer";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isDesktopMode } from "@/lib/supabase/local-shim";
 import { WeeklyDigest } from "@/emails/weekly-digest";
 import type { WeeklyDigestProps, DigestPattern, NewPatternAlert, ExportReadyPattern } from "@/emails/weekly-digest";
 
@@ -35,14 +34,6 @@ function formatDate(d: Date): string {
 }
 
 async function buildDigestFromBrain(): Promise<WeeklyDigestProps | null> {
-  // Desktop mode always has a local brain; in hosted mode we require
-  // Supabase credentials to be configured.
-  if (!isDesktopMode()) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!supabaseUrl || !anonKey) return null;
-  }
-
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "");
   const supabase = createAdminClient();
 

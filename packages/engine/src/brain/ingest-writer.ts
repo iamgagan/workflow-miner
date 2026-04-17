@@ -1,4 +1,4 @@
-import { BrainClient } from './client.js';
+import type { BrainClient } from './client.js';
 import type { BrainPage } from './types.js';
 import type { NormalizedEvent, Entity, EntityType } from '../normalize/schema.js';
 import { EntityType as EntityTypeEnum } from '../normalize/schema.js';

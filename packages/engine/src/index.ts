@@ -30,7 +30,7 @@ export type { Entity, NormalizedEvent } from "./normalize/schema.js";
 // Brain
 export { IngestWriter } from "./brain/ingest-writer.js";
 export type { WriteResult } from "./brain/ingest-writer.js";
-export { BrainClient } from "./brain/client.js";
+export type { BrainClient } from "./brain/client.js";
 export type {
   BrainPage,
   BrainLink,

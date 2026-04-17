@@ -13,8 +13,5 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "devDependencies": {
-    "next": "^15.1.0"
   }
 }

@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
   const context = body.context ?? "unknown";
   const message = body.message.slice(0, 5000);
 
-  // Always log feedback to stdout so it's visible in Vercel logs even when
+  // Always log feedback to stdout so it's visible in server logs even when
   // SMTP isn't configured — handy for early alpha.
   console.log(
     `[feedback] from=${userEmail} context=${context}\n${message}`,

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { BrainClient as EngineBrainClient } from "@workflow-miner/engine";
 import { createClient } from "@/lib/supabase/server";
-import { isDesktopMode } from "@/lib/supabase/local-shim";
 import { LocalBrainClient } from "@/lib/local-brain-client";
 
 export const runtime = "nodejs";
@@ -231,15 +230,10 @@ export async function POST(request: NextRequest) {
   // 3. Dynamically import the engine
   const engine = await getEngine();
 
-  // 4. Set up brain writer — in desktop mode the brain lives in local PGlite,
-  // so we construct a LocalBrainClient and cast it to the engine's BrainClient
+  // 4. Set up brain writer — the brain lives in local PGlite, so we
+  // construct a LocalBrainClient and cast it to the engine's BrainClient
   // shape (structural, only putPage/addTimelineEntry/addLink are used).
-  const brainClient: EngineBrainClient = isDesktopMode()
-    ? (new LocalBrainClient() as unknown as EngineBrainClient)
-    : new engine.BrainClient({
-        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-        supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
-      });
+  const brainClient: EngineBrainClient = new LocalBrainClient() as unknown as EngineBrainClient;
   const ingestWriter = new engine.IngestWriter(brainClient);
   const normalizer = new engine.Normalizer();
 

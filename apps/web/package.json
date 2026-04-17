@@ -24,8 +24,6 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@react-email/components": "^1.0.12",
     "@electric-sql/pglite": "^0.2.17",
-    "@supabase/ssr": "^0.5.2",
-    "@supabase/supabase-js": "^2.49.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "framer-motion": "^12.4.7",

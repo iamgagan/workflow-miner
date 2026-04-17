@@ -1,4 +1,4 @@
-export { BrainClient } from './client.js';
+export type { BrainClient } from './client.js';
 export type {
   BrainPage,
   BrainLink,

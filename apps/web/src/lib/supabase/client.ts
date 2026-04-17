@@ -1,80 +1,35 @@
-import { createBrowserClient } from "@supabase/ssr";
+// Desktop-only browser stub. The PGlite-backed local-shim is Node-only
+// (uses node:fs / node:os / node:path), so the client-side factory returns a
+// tiny object with the same auth surface the renderer historically touched.
+//
+// The login/signup pages are gone and user-menu.tsx only hits `auth.signOut`
+// in legacy hosted-mode branches that never activate in desktop, so this
+// stub exists purely to keep any stale import resolving without crashing.
 
-/**
- * Browser-side Supabase client used by the auth UI (login/signup pages)
- * and the sign-out action in the user menu.
- *
- * In desktop mode the renderer never reaches these code paths — login and
- * signup redirect to /dashboard on mount, and the sign-out menu item is
- * hidden. As a defense-in-depth measure we still return a no-op stub when
- * the public Supabase env vars are missing, so any accidental call (stale
- * closure, devtools probe, future regression) fails gracefully instead of
- * throwing on the non-null assertion.
- */
+const LOCAL_USER = { id: "local", email: "local@workflow-miner.app" } as const;
+
 export function createClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!url || !anonKey) {
-    return createNoopBrowserClient();
-  }
-
-  return createBrowserClient(url, anonKey);
-}
-
-/**
- * Minimal stub mirroring the few methods our auth UI calls. Each one
- * returns a Promise that resolves to a "not supported" error so the form
- * shows a sensible message instead of a console crash.
- */
-function createNoopBrowserClient(): ReturnType<typeof createBrowserClient> {
-  const notSupported = {
-    error: { message: "Auth is not available in desktop mode" },
-    data: null,
-  };
-  const stub = {
+  const noopResult = { data: null, error: null };
+  return {
     auth: {
-      async signInWithPassword() {
-        return notSupported;
-      },
-      async signUp() {
-        return notSupported;
-      },
-      async signInWithOAuth() {
-        return notSupported;
-      },
       async signOut() {
         return { error: null };
       },
+      async signInWithPassword() {
+        return noopResult;
+      },
+      async signUp() {
+        return noopResult;
+      },
+      async signInWithOAuth() {
+        return noopResult;
+      },
       async getUser() {
-        return {
-          data: { user: { id: "local", email: "local@workflow-miner.app" } },
-          error: null,
-        };
+        return { data: { user: { ...LOCAL_USER } }, error: null };
       },
       async exchangeCodeForSession() {
-        return notSupported;
+        return noopResult;
       },
     },
-    from() {
-      // Returning a thenable-shaped object so any chained call collapses
-      // to a no-op on the next .then().
-      const noop = {
-        select: () => noop,
-        insert: () => noop,
-        upsert: () => noop,
-        eq: () => noop,
-        in: () => noop,
-        order: () => noop,
-        limit: () => noop,
-        single: async () => ({ data: null, error: null }),
-        then: (resolve: (v: { data: null; error: null }) => unknown) =>
-          Promise.resolve({ data: null, error: null }).then(resolve),
-      };
-      return noop;
-    },
   };
-  // Safe cast: our auth UI only ever calls the methods above. Any other
-  // surface would also be a bug in desktop mode.
-  return stub as unknown as ReturnType<typeof createBrowserClient>;
 }

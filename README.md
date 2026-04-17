@@ -1,50 +1,46 @@
 # Workflow Miner
 
-**The observability layer for AI automation.** Workflow Miner discovers the workflow patterns your team actually repeats across Gmail, Slack, Linear, Google Calendar, GitHub, Notion, Jira, and Outlook — then exports each pattern to the runtime of your choice: **Claude, n8n, Zapier, or generic JSON**.
+**The observability layer for AI automation, as a local-first macOS app.** Workflow Miner watches how you already work across Gmail, Slack, Linear, Google Calendar, GitHub, Notion, Jira, and Outlook — then surfaces the workflow patterns your team actually repeats, scored by confidence and frequency, and exports each pattern to the runtime of your choice: **Claude, n8n, Zapier, or generic JSON**.
 
-Most automation tools make you know what to build. Workflow Miner watches how you already work, finds the patterns you'd never write down, scores them by confidence and frequency, and lets you deploy them anywhere.
+**Your data never leaves your Mac.** The brain database is an embedded Postgres (PGlite) file in `~/Library/Application Support/WorkflowMiner/brain`. OAuth refresh tokens live in the macOS Keychain. The bundled Next.js server binds to `127.0.0.1:<random port>` and is not reachable on the local network. There is no cloud component to trust.
 
-It runs in two flavors:
-
-- **Desktop app (macOS)** — local-first, your data never leaves your Mac. Brain database is an embedded Postgres (PGlite); OAuth secrets live in the macOS Keychain. See [`apps/desktop/README.md`](apps/desktop/README.md).
-- **Hosted web app** — same Next.js dashboard backed by Supabase, deployable to Vercel. Useful for teams that want a shared workspace; see the deployment section below.
+For shell internals, signing, notarization, and troubleshooting see [`apps/desktop/README.md`](apps/desktop/README.md).
 
 ## Architecture
 
 ```
 workflow-miner-monorepo/
 ├── apps/
-│   ├── web/                  # Next.js 15 dashboard + API
+│   ├── web/                  # Next.js 15 dashboard + API (runs as Tauri sidecar)
 │   │   ├── src/
 │   │   │   ├── app/          # Pages & API routes
 │   │   │   ├── components/   # React components (shadcn/ui)
-│   │   │   └── lib/          # Supabase clients, local-shim, utilities
+│   │   │   └── lib/          # Local-shim (PGlite), desktop bridge, utilities
 │   │   └── e2e/              # Playwright E2E tests
 │   └── desktop/              # macOS Tauri shell (wraps apps/web locally)
 │       ├── src-tauri/        # Rust shell, Keychain, OAuth loopback
 │       ├── scripts/          # Next.js sidecar bootstrap + build helpers
 │       └── resources/        # Splash + bundled standalone Next.js output
-├── packages/
-│   └── engine/               # @workflow-miner/engine
-│       └── src/
-│           ├── connectors/   # Gmail, Slack, Linear, Calendar APIs
-│           ├── mining/       # PrefixSpan pattern detection
-│           ├── normalize/    # Raw events → standard schema
-│           ├── brain/        # Supabase persistence layer
-│           ├── pipeline/     # Ingestion orchestration
-│           ├── compiler/     # Pattern → Claude skill pack
-│           └── cli/          # CLI commands
-└── vercel.json               # Deployment config
+└── packages/
+    └── engine/               # @workflow-miner/engine
+        └── src/
+            ├── connectors/   # Gmail, Slack, Linear, Calendar APIs
+            ├── mining/       # PrefixSpan pattern detection
+            ├── normalize/    # Raw events → standard schema
+            ├── brain/        # Local Postgres persistence layer
+            ├── pipeline/     # Ingestion orchestration
+            ├── compiler/     # Pattern → Claude skill pack
+            └── cli/          # CLI commands
 ```
 
-### Desktop vs hosted: how the same code runs in both
+### How the app is wired
 
-The desktop app reuses the entire Next.js dashboard. The single switch is the `WORKFLOW_MINER_MODE=desktop` environment variable that the Tauri shell sets when spawning the Next.js sidecar:
+The desktop app reuses the entire Next.js dashboard. The Tauri shell sets `WORKFLOW_MINER_MODE=desktop` when spawning the Next.js sidecar, and the app rewires itself around a local PGlite database:
 
 - **`apps/web/src/lib/supabase/local-shim.ts`** — a PGlite-backed shim that implements the small subset of the Supabase JS client (`from`, `select`, `eq`, `in`, `or`, `gte`, `lt`, `order`, `limit`, `single`, `insert`, `upsert`, `auth.getUser`) that the codebase actually calls. The existing `schema.sql` runs verbatim because PGlite is real WASM Postgres.
-- **`apps/web/src/lib/supabase/{server,admin}.ts`** — env-gated factories that return either a real Supabase client or the local shim depending on `WORKFLOW_MINER_MODE`.
+- **`apps/web/src/lib/supabase/{server,admin}.ts`** — factories that return the local shim in desktop mode.
 - **`apps/web/src/middleware.ts`** — skips auth in desktop mode (single local user).
-- **`apps/web/src/lib/local-brain-client.ts`** — drop-in replacement for the engine's hosted `BrainClient`, used in desktop mode by the sync route.
+- **`apps/web/src/lib/local-brain-client.ts`** — drop-in replacement for the engine's `BrainClient`, used by the sync route.
 - **`apps/web/src/lib/desktop-bridge.ts`** — renderer-side bridge into the Tauri shell for Keychain access and OAuth loopback flows.
 - **`apps/desktop/src-tauri/`** — Rust shell that picks a free 127.0.0.1 port, spawns the Next.js sidecar, hosts macOS Keychain commands, and runs the OAuth loopback listener.
 
@@ -55,7 +51,7 @@ The desktop app reuses the entire Next.js dashboard. The single switch is the `W
                ↓
 2. NORMALIZE Events converted to standard schema (EventType, EntityType)
                ↓
-3. INGEST   Normalized events written to brain_timeline (Supabase)
+3. INGEST   Normalized events written to brain_timeline (local PGlite)
                ↓
 4. MINE     Sessionizer groups by time gaps → PatternMiner detects sequences
                ↓
@@ -69,20 +65,28 @@ The desktop app reuses the entire Next.js dashboard. The single switch is the `W
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 15, React 19, Tailwind CSS, Radix UI, Framer Motion, Recharts |
-| Backend | Next.js API routes, Supabase (PostgreSQL + Auth + RLS) |
+| Backend | Next.js API routes running as a Tauri sidecar |
+| Brain DB | PGlite (embedded Postgres, WASM) |
 | Engine | TypeScript, PrefixSpan algorithm, Zod validation |
 | LLM | OpenRouter (Claude) for chat coaching and nudges |
-| Auth | Supabase Auth + middleware session checks |
+| Shell | Tauri 2 (Rust) — macOS window, Keychain, OAuth loopback |
 | Testing | Playwright (E2E), Vitest (engine unit tests) |
-| Deploy | Vercel |
+| Deploy | macOS .app (Tauri) |
 
 ## Getting Started
 
-Pick the path that matches what you want to run.
+Local-first. Runs only on your Mac, no hosted accounts, no cloud database.
 
-### Path A — Desktop app (recommended for individuals)
+### Prerequisites
 
-Local-first. Runs only on your Mac, no Supabase, no hosted accounts.
+- macOS (Apple Silicon or Intel)
+- Node.js >= 20.0.0
+- pnpm >= 8
+- Rust toolchain (`rustup`)
+- Google Cloud Console project (for Gmail + Calendar OAuth)
+- [OpenRouter](https://openrouter.ai) API key (for LLM features)
+
+### 1. Clone and Install
 
 ```bash
 brew install pnpm rustup
@@ -92,156 +96,57 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 git clone <repo-url>
 cd workflow-miner
 pnpm install
+```
 
-# Configure Google OAuth (required for Gmail + Calendar)
+### 2. Configure Google OAuth
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. Create an OAuth client of type **Desktop application**
+3. Enable **Gmail API** and **Google Calendar API** on the project
+4. Copy the Client ID and Client Secret into your env file:
+
+```bash
 cp apps/desktop/.env.example apps/desktop/.env.local
 $EDITOR apps/desktop/.env.local
+```
 
+**`apps/desktop/.env.local`** (required for Google connectors):
+
+```env
+GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GMAIL_CLIENT_SECRET=GOCSPX-...
+NEXT_PUBLIC_GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
+
+# OpenRouter (for chat coach + nudges + digest summaries)
+OPEN_ROUTER_API_KEY=sk-or-v1-...
+```
+
+See [`apps/desktop/.env.example`](apps/desktop/.env.example) for the full list of optional variables (data directory override, standalone desktop-mode testing).
+
+### 3. Run the app
+
+```bash
 pnpm desktop:dev
 ```
 
-See [`apps/desktop/README.md`](apps/desktop/README.md) for the full architecture, signing/notarization steps, and troubleshooting.
+The Tauri shell launches a native window, spawns the Next.js sidecar on a random localhost port, and opens the dashboard. The brain database is created on first launch at `~/Library/Application Support/WorkflowMiner/brain`.
 
-### Path B — Hosted web app
-
-### Prerequisites
-
-- Node.js >= 20.0.0
-- pnpm >= 8
-- A [Supabase](https://supabase.com) project
-- Google Cloud Console project (for Gmail + Calendar OAuth)
-- [OpenRouter](https://openrouter.ai) API key (for LLM features)
-
-### 1. Clone and Install
-
-```bash
-git clone <repo-url>
-cd workflow-miner
-pnpm install
-```
-
-### 2. Set Up Supabase
-
-Create a Supabase project, then run these SQL commands in the SQL Editor:
-
-**Brain tables** (via `/api/admin/setup-brain`):
-```sql
--- brain_pages, brain_links, brain_tags, brain_timeline
--- These are created automatically when you hit POST /api/admin/setup-brain
-```
-
-**Connector tokens table:**
-```sql
-CREATE TABLE IF NOT EXISTS connector_tokens (
-  id SERIAL PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
-  provider TEXT NOT NULL,
-  access_token TEXT NOT NULL,
-  refresh_token TEXT,
-  token_type TEXT DEFAULT 'Bearer',
-  expires_at TIMESTAMPTZ,
-  scopes TEXT DEFAULT '',
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, provider)
-);
-
-ALTER TABLE connector_tokens ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Users can manage their own tokens" ON connector_tokens
-  FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-```
-
-### 3. Configure Environment Variables
-
-Copy the example env files:
-
-```bash
-cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
-```
-
-**`apps/web/.env.local`** (required):
-
-```env
-# Supabase (from your project dashboard)
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-
-# OpenRouter (for LLM chat + coaching)
-OPEN_ROUTER_API_KEY=sk-or-v1-...
-
-# Google OAuth (for Gmail + Calendar connectors)
-GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GMAIL_CLIENT_SECRET=GOCSPX-...
-```
-
-**`.env`** (optional, for CLI engine usage):
-
-```env
-# Direct API tokens for CLI-only ingestion
-GMAIL_CLIENT_ID=
-GMAIL_CLIENT_SECRET=
-GMAIL_REFRESH_TOKEN=
-SLACK_BOT_TOKEN=
-LINEAR_API_KEY=
-CALENDAR_CLIENT_ID=
-CALENDAR_CLIENT_SECRET=
-CALENDAR_REFRESH_TOKEN=
-
-# Email digest delivery
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASS=
-REPORT_TO_EMAIL=
-REPORT_FROM_EMAIL=
-```
-
-### 4. Set Up Google OAuth
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Create a project (or use existing)
-3. Enable **Gmail API** and **Google Calendar API**
-4. Create OAuth 2.0 credentials (Web application type)
-5. Add authorized redirect URI: `http://localhost:3000/api/connectors/google/callback`
-6. Copy Client ID and Client Secret to your `.env.local`
-
-### 5. Build and Run
-
-```bash
-# Build the engine package first
-pnpm --filter @workflow-miner/engine build
-
-# Start the dev server
-cd apps/web && npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
-
-### 6. Initialize Brain Tables
-
-Hit the admin endpoint to create brain tables:
-
-```bash
-curl -X POST http://localhost:3000/api/admin/setup-brain
-```
+See [`apps/desktop/README.md`](apps/desktop/README.md) for the full shell architecture, signing/notarization steps, and troubleshooting.
 
 ## Usage
 
 ### Connecting Sources
 
-1. Navigate to **/connectors**
-2. Click **Connect with Google** to authorize Gmail + Calendar via OAuth
-3. For Slack and Linear, add API tokens in the settings or `.env`
+1. Navigate to **Connectors** in the app
+2. Click **Connect with Google** to authorize Gmail + Calendar via the OAuth loopback flow — tokens land in the macOS Keychain
+3. For Slack and Linear, paste API tokens in the settings UI
 4. Click **Sync Now** to pull events from connected sources
 
 ### Viewing Patterns
 
 After syncing data:
 
-1. Go to **/patterns** to see detected workflow patterns
+1. Go to **Patterns** to see detected workflow patterns
 2. Click **Mine Patterns** to run the PrefixSpan algorithm on your timeline data
 3. Each pattern shows:
    - **Confidence score** (composite of frequency, recency, consistency)
@@ -261,7 +166,7 @@ Coach nudges appear automatically based on detected patterns and activity trends
 
 ### Exporting Skills
 
-Navigate to **/skills** to export detected patterns as Claude skill packs that can be deployed to automate recurring workflows.
+Navigate to **Skills** to export detected patterns as Claude skill packs that can be deployed to automate recurring workflows.
 
 ## Engine CLI
 
@@ -299,7 +204,7 @@ npx workflow-miner export --format yaml
 |--------|----------|-------------|
 | `GET` | `/api/connectors/status` | Connection status for all providers |
 | `GET` | `/api/connectors/google/authorize` | Start Google OAuth flow |
-| `GET` | `/api/connectors/google/callback` | OAuth callback (stores tokens) |
+| `GET` | `/api/connectors/google/callback` | OAuth callback (stores tokens in Keychain) |
 | `POST` | `/api/sync` | Sync all connected sources |
 
 ### AI APIs
@@ -313,7 +218,7 @@ npx workflow-miner export --format yaml
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/admin/setup-brain` | Initialize brain database tables |
+| `POST` | `/api/admin/setup-brain` | Initialize brain database tables (runs automatically on first launch) |
 | `POST` | `/api/admin/seed-brain` | Populate demo data (development only) |
 | `GET` | `/api/digest` | Generate weekly digest |
 
@@ -324,7 +229,7 @@ npx workflow-miner export --format yaml
 ```bash
 cd apps/web
 
-# Run all 36 E2E tests
+# Run all E2E tests
 npx playwright test
 
 # Run with UI
@@ -334,8 +239,6 @@ npx playwright test --ui
 npx playwright test e2e/dashboard.spec.ts
 ```
 
-Tests cover: auth pages, connectors, dashboard, landing page, navigation, onboarding, patterns, replay, settings, and skills.
-
 ### Engine Unit Tests (Vitest)
 
 ```bash
@@ -343,32 +246,15 @@ cd packages/engine
 npm test
 ```
 
-## Deployment
+## Building a release
 
-### Vercel (Production)
-
-The project deploys to Vercel as a monorepo:
+Produce a signed, notarization-ready universal `.app`:
 
 ```bash
-# Deploy to production
-vercel deploy --prod
+pnpm desktop:build:universal
 ```
 
-The `vercel.json` at the repo root configures:
-- Build command: `pnpm run build`
-- Output directory: `apps/web/.next`
-- Weekly digest cron: Mondays at 9 AM UTC
-
-### Environment Variables on Vercel
-
-Set these in Vercel Dashboard > Project > Settings > Environment Variables:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `OPEN_ROUTER_API_KEY`
-- `GMAIL_CLIENT_ID`
-- `GMAIL_CLIENT_SECRET`
+Output lands in `apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/`. See [`apps/desktop/README.md`](apps/desktop/README.md) for signing and notarization details.
 
 ## Project Structure Details
 
@@ -377,8 +263,6 @@ Set these in Vercel Dashboard > Project > Settings > Environment Variables:
 | Route | Description |
 |-------|-------------|
 | `/` | Landing page with hero, features, pattern demo |
-| `/login` | Email/password authentication |
-| `/signup` | Account creation |
 | `/dashboard` | Main dashboard with stats, charts, recent patterns |
 | `/patterns` | Browse and search detected patterns |
 | `/patterns/[id]` | Pattern detail with workflow graph and evidence |
@@ -394,7 +278,7 @@ Set these in Vercel Dashboard > Project > Settings > Environment Variables:
 | `connectors/` | Gmail, Slack, Linear, Calendar API integrations |
 | `mining/` | PrefixSpan-based pattern detection + scoring |
 | `normalize/` | Convert raw events to standard schema |
-| `brain/` | Supabase persistence (timeline + pages) |
+| `brain/` | Local Postgres persistence (timeline + pages) |
 | `pipeline/` | Orchestrate ingest flow (connect → normalize → write) |
 | `compiler/` | Generate Claude skill packs from patterns |
 | `cli/` | Command-line interface for standalone usage |

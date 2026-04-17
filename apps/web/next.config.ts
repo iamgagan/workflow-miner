@@ -19,7 +19,7 @@ const nextConfig: NextConfig = {
 };
 
 // Only wrap with Sentry when a DSN is configured. Source map upload only
-// runs when SENTRY_AUTH_TOKEN is also set (typically a Vercel secret).
+// runs when SENTRY_AUTH_TOKEN is also set.
 const sentryEnabled = Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN || process.env.SENTRY_DSN);
 
 export default sentryEnabled
