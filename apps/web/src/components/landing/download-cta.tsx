@@ -42,7 +42,9 @@ export function DownloadCTA() {
           {/* macOS button */}
           {(platform === "macos" || platform === "unknown") && (
             <motion.a
-              href="#download-mac"
+              href="https://github.com/iamgagan/workflow-miner/releases/latest"
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-3 rounded-full bg-accent px-8 py-3 text-base font-semibold text-accent-foreground shadow-warm-card transition-shadow hover:shadow-lg"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -54,6 +56,20 @@ export function DownloadCTA() {
                 .dmg
               </span>
             </motion.a>
+          )}
+
+          {/* Unsigned-build caveat */}
+          {(platform === "macos" || platform === "unknown") && (
+            <p className="text-xs text-muted-foreground">
+              Unsigned build — on first launch,{" "}
+              <Link
+                href="/install"
+                className="underline underline-offset-2 transition-colors hover:text-foreground"
+              >
+                right-click and choose Open
+              </Link>
+              .
+            </p>
           )}
 
           {/* Windows — coming soon */}
