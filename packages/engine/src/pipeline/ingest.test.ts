@@ -175,6 +175,54 @@ describe("runIngest", () => {
     expect(JSON.parse(event.entity_refs!)).toHaveLength(2);
   });
 
+  it("propagates DB write failures instead of treating them as fetch errors", async () => {
+    const dbError = new Error("database is locked");
+    const insertMany = vi.fn(() => {
+      throw dbError;
+    });
+
+    const deps = makeDeps({
+      insertMany,
+      connectors: {
+        slack: makeConnector("slack", [makeRawEvent({ id: "s-1", source: "slack" })]),
+        gmail: makeConnector("gmail"),
+        linear: makeConnector("linear"),
+        calendar: makeConnector("calendar"),
+      },
+    });
+
+    await expect(
+      runIngest({ source: "slack", days: 30, dryRun: false }, deps),
+    ).rejects.toThrow("database is locked");
+  });
+
+  it("preserves partial count when streaming connector fails mid-stream", async () => {
+    const partiallyFailingConnector: ConnectorInterface = {
+      source: "slack",
+      fetchEvents: vi.fn(async function* (): AsyncIterable<readonly RawEvent[]> {
+        yield [makeRawEvent({ id: "s-page1-a", source: "slack" })];
+        yield [makeRawEvent({ id: "s-page2-a", source: "slack" })];
+        throw new Error("upstream rate-limited on page 3");
+      }),
+    };
+
+    const deps = makeDeps({
+      connectors: {
+        slack: partiallyFailingConnector,
+        gmail: makeConnector("gmail"),
+        linear: makeConnector("linear"),
+        calendar: makeConnector("calendar"),
+      },
+    });
+
+    const result = await runIngest({ source: "slack", days: 30, dryRun: false }, deps);
+
+    expect(result.sourceCounts["slack"]).toBe(2);
+    expect(result.totalEvents).toBe(2);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].message).toBe("upstream rate-limited on page 3");
+  });
+
   it("handles empty event list from connector", async () => {
     const deps = makeDeps({
       connectors: {

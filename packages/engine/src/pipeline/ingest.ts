@@ -99,6 +99,7 @@ interface SourceOutcome {
   readonly count: number;
   readonly errors: readonly NormalizeError[];
   readonly skipped: boolean;
+  readonly fetchFailed: boolean;
 }
 
 async function ingestOneSource(
@@ -111,13 +112,13 @@ async function ingestOneSource(
   const credentials = buildCredentials(config, source);
   if (!credentials) {
     log(`Skipping ${source}: not configured`);
-    return { source, count: 0, errors: [], skipped: true };
+    return { source, count: 0, errors: [], skipped: true, fetchFailed: false };
   }
 
   const connector = connectors[source];
   if (!connector) {
     log(`Skipping ${source}: no connector available`);
-    return { source, count: 0, errors: [], skipped: true };
+    return { source, count: 0, errors: [], skipped: true, fetchFailed: false };
   }
 
   const connectorConfig: ConnectorConfig = {
@@ -127,43 +128,53 @@ async function ingestOneSource(
 
   const errors: NormalizeError[] = [];
   let count = 0;
+  let pageObserved = false;
+  let fetchFailed = false;
 
-  try {
-    let pageObserved = false;
-    for await (const page of connector.fetchEvents(connectorConfig)) {
-      pageObserved = true;
-      const { events: normalized, errors: pageErrors } = normalizer.normalize(page);
-      if (pageErrors.length > 0) {
-        for (const error of pageErrors) {
-          log(`Normalization error (${source}): ${error.rawEventId} — ${error.message}`);
-        }
-        errors.push(...pageErrors);
-      }
+  // Drive the iterator manually so we can distinguish fetch errors (caught,
+  // logged, source marked failed) from normalize/insert errors (propagated,
+  // because they indicate a bug or DB problem the caller must handle).
+  const iter = connector.fetchEvents(connectorConfig)[Symbol.asyncIterator]();
+  while (true) {
+    let step: IteratorResult<readonly RawEvent[]>;
+    try {
+      step = await iter.next();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`Error fetching from ${source}: ${message}`);
+      errors.push({ rawEventId: `${source}-fetch`, message });
+      fetchFailed = true;
+      break;
+    }
+    if (step.done) break;
+    pageObserved = true;
 
-      const insertEvents = normalized.map(toInsertEvent);
-      if (options.dryRun) {
-        log(`[dry-run] ${source}: ${insertEvents.length} events would be ingested`);
-      } else {
-        insertMany(insertEvents);
+    const page = step.value;
+    const { events: normalized, errors: pageErrors } = normalizer.normalize(page);
+    if (pageErrors.length > 0) {
+      for (const error of pageErrors) {
+        log(`Normalization error (${source}): ${error.rawEventId} — ${error.message}`);
       }
-      count += insertEvents.length;
+      errors.push(...pageErrors);
     }
 
-    // Preserve prior behavior: tests assert insertMany([]) is called when the
-    // connector yielded nothing, so we still emit a single empty insert.
-    if (!pageObserved && !options.dryRun) {
-      insertMany([]);
+    const insertEvents = normalized.map(toInsertEvent);
+    if (options.dryRun) {
+      log(`[dry-run] ${source}: ${insertEvents.length} events would be ingested`);
+    } else {
+      insertMany(insertEvents);
     }
-
-    log(`${source}: ${count} events ingested`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log(`Error fetching from ${source}: ${message}`);
-    errors.push({ rawEventId: `${source}-fetch`, message });
-    return { source, count: 0, errors, skipped: false };
+    count += insertEvents.length;
   }
 
-  return { source, count, errors, skipped: false };
+  // Preserve prior behavior: tests assert insertMany([]) is called when the
+  // connector yielded nothing, but only on a clean run (no fetch failure).
+  if (!pageObserved && !options.dryRun && !fetchFailed) {
+    insertMany([]);
+  }
+
+  log(`${source}: ${count} events ingested`);
+  return { source, count, errors, skipped: false, fetchFailed };
 }
 
 export async function runIngest(
@@ -195,8 +206,11 @@ export async function runIngest(
       skippedSources.push(outcome.source);
       continue;
     }
-    if (outcome.errors.length > 0 && outcome.count === 0 && outcome.errors[0].rawEventId.endsWith("-fetch")) {
-      // Pure fetch failure: preserve prior behavior of not adding to sourceCounts.
+    // Pure fetch failure with no events ingested: preserve prior contract of
+    // omitting the source from sourceCounts. If the source streamed some pages
+    // before failing, record the partial count so the caller sees what was
+    // actually written to the DB.
+    if (outcome.fetchFailed && outcome.count === 0) {
       allErrors.push(...outcome.errors);
       continue;
     }
