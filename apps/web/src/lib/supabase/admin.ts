@@ -1,10 +1,13 @@
-import { createLocalShimClient, type LocalShimClient } from "./local-shim";
+import { createClient } from "@supabase/supabase-js";
 
 /**
- * Desktop-only: returns the local PGlite-backed shim. In hosted mode this
- * used to issue a service-role Supabase client to bypass RLS, but desktop
- * runs under a single local user where RLS does not apply.
+ * Returns a Supabase client configured with the service_role key,
+ * bypassing Row Level Security. Useful for background jobs and cron.
  */
-export function createAdminClient(): LocalShimClient {
-  return createLocalShimClient();
+export function createAdminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
 }
+

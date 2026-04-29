@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { isDesktopMode } from "@/lib/supabase/local-shim";
+import { createClient } from "@/lib/supabase/server";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -9,21 +8,6 @@ interface ExchangeRequest {
   redirect_uri: string;
 }
 
-/**
- * Exchange a Google OAuth authorization code for tokens, then store them in
- * the local PGlite brain (desktop mode) or Supabase (hosted mode).
- *
- * Used by the desktop OAuth loopback flow:
- *   1. The Tauri shell opens a loopback listener and the browser navigates
- *      to Google's authorize URL with the loopback redirect_uri.
- *   2. Google redirects back to the loopback with `?code=...`.
- *   3. The renderer captures the code and POSTs it here.
- *   4. We exchange code → tokens server-side (so the client_secret stays in
- *      the Next.js process) and persist the result.
- *
- * Returns `{ refresh_token, scopes }` so the renderer can mirror the
- * refresh_token into the macOS Keychain for redundancy.
- */
 export async function POST(request: NextRequest) {
   let body: ExchangeRequest;
   try {
@@ -46,6 +30,14 @@ export async function POST(request: NextRequest) {
       { error: "server_oauth_not_configured" },
       { status: 500 },
     );
+  }
+
+  // Get the authenticated user
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   // Exchange the code for tokens.
@@ -78,17 +70,14 @@ export async function POST(request: NextRequest) {
     scope?: string;
   };
 
-  // Persist into connector_tokens. In desktop mode this hits the local PGlite
-  // database; in hosted mode it goes through the Supabase service-role client.
-  const client = createAdminClient();
   const expiresAt = tokens.expires_in
     ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
     : null;
 
-  // For desktop mode we also persist the refresh_token under the canonical
+  // For individual mode, we persist the refresh_token under the canonical
   // `tokens` JSONB shape that `loadCredentials` reads first.
   const tokensBlob: Record<string, string> = {};
-  if (isDesktopMode() && tokens.refresh_token) {
+  if (tokens.refresh_token) {
     tokensBlob.GMAIL_CLIENT_ID = clientId;
     tokensBlob.GMAIL_CLIENT_SECRET = clientSecret;
     tokensBlob.GMAIL_REFRESH_TOKEN = tokens.refresh_token;
@@ -97,12 +86,12 @@ export async function POST(request: NextRequest) {
     tokensBlob.CALENDAR_REFRESH_TOKEN = tokens.refresh_token;
   }
 
-  const userId = "local";
-  const { error: upsertError } = await client
+  const { error: upsertError } = await supabase
     .from("connector_tokens")
     .upsert(
       {
-        user_id: userId,
+        user_id: user.id,
+        organization_id: user.app_metadata.organization_id || user.id,
         provider: "google",
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token ?? null,

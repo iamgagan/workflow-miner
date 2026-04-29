@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Plug, RefreshCw, Check, Terminal } from "lucide-react";
+import { Sparkles, Plug, RefreshCw, Check } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { isTauri } from "@/lib/desktop-bridge";
 
 const WIZARD_DISMISSED_KEY = "onboarding-wizard-dismissed";
 
@@ -22,41 +21,17 @@ interface WizardStep {
   description: string;
   buttonLabel: string;
   onClick: () => void | Promise<void>;
-  /** Optional command/code block shown above the button */
-  command?: string;
-  /** Optional env-var hint list shown above the button */
-  envVars?: Array<{ name: string; hint: string }>;
 }
 
 interface OnboardingWizardProps {
   onComplete?: () => void;
 }
 
-/**
- * First-run wizard. Renders different steps depending on whether the app is
- * running inside the Tauri desktop shell or as the hosted web app.
- *
- * Desktop steps (default for the macOS app):
- *   1. Welcome
- *   2. Connect a source — navigates to /connectors
- *   3. Sync — POSTs /api/sync?source=all and refreshes the dashboard
- *
- * Hosted steps (legacy):
- *   1. Welcome
- *   2. Configure env vars
- *   3. Run the CLI ingest command
- */
 export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [desktop, setDesktop] = useState(false);
-
-  // isTauri() requires window — defer to effect so SSR doesn't crash.
-  useEffect(() => {
-    setDesktop(isTauri());
-  }, []);
 
   const dismiss = () => {
     localStorage.setItem(WIZARD_DISMISSED_KEY, "true");
@@ -64,12 +39,12 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
     onComplete?.();
   };
 
-  const desktopSteps: WizardStep[] = [
+  const steps: WizardStep[] = [
     {
       icon: Sparkles,
-      title: "Welcome to Workflow Miner",
+      title: "Welcome to Company Brain",
       description:
-        "Workflow Miner watches the tools you already use — Gmail, Calendar, Slack, Linear — and surfaces the patterns that keep showing up. Everything runs locally on your Mac.",
+        "The Company Brain watches the tools your team uses — Gmail, Calendar, Slack, Linear — and surfaces the patterns that keep showing up. It answers questions based on your organization's real operations.",
       buttonLabel: "Get started",
       onClick: () => setStep(1),
     },
@@ -77,11 +52,10 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       icon: Plug,
       title: "Connect a data source",
       description:
-        "Pick a tool to connect. Google uses one-click OAuth via your default browser; Slack and Linear take a pasted token. Tokens live in the macOS Keychain — never on disk in plaintext.",
+        "Pick a tool to connect. Your organization's data will be securely embedded and isolated using Row Level Security.",
       buttonLabel: "Open connectors",
       onClick: () => {
         router.push("/connectors");
-        // Don't dismiss yet — let the user finish step 3 from the dashboard.
         setStep(2);
       },
     },
@@ -89,25 +63,16 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       icon: RefreshCw,
       title: "Run your first sync",
       description:
-        "Once you've connected at least one source, click below to pull in your recent activity. The first sync usually finishes in under a minute.",
+        "Once you've connected at least one source, click below to pull in your recent activity. The background worker will generate embeddings automatically.",
       buttonLabel: busy ? "Syncing…" : "Sync now",
       onClick: async () => {
         if (busy) return;
         setBusy(true);
         try {
-          // Guard: if the user never completed step 2 (no connectors),
-          // POSTing to /api/sync returns "skipped" for every source and
-          // the user sees nothing happen. Route them back to /connectors
-          // instead of letting the wizard sit on a silent no-op.
           const statusRes = await fetch("/api/connectors/status");
           const statusBody = await statusRes.json().catch(() => ({}));
-          const connectors = (statusBody?.connectors ?? {}) as Record<
-            string,
-            { connected?: boolean }
-          >;
-          const anyConnected = Object.values(connectors).some(
-            (c) => c?.connected === true,
-          );
+          const connectors = (statusBody?.connectors ?? {}) as Record<string, { connected?: boolean }>;
+          const anyConnected = Object.values(connectors).some((c) => c?.connected === true);
           if (!anyConnected) {
             router.push("/connectors");
             dismiss();
@@ -123,41 +88,6 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       },
     },
   ];
-
-  const hostedSteps: WizardStep[] = [
-    {
-      icon: Sparkles,
-      title: "Welcome to Workflow Miner",
-      description:
-        "Discover hidden patterns in your daily work. Workflow Miner observes your tools and surfaces repeatable workflows you can turn into reusable skills.",
-      buttonLabel: "Get started",
-      onClick: () => setStep(1),
-    },
-    {
-      icon: Plug,
-      title: "Configure credentials",
-      description:
-        "Add your Gmail credentials as environment variables so the ingestion pipeline can read your email metadata.",
-      buttonLabel: "I've configured it",
-      onClick: () => setStep(2),
-      envVars: [
-        { name: "GMAIL_CLIENT_ID", hint: "OAuth 2.0 client ID from Google Cloud Console" },
-        { name: "GMAIL_CLIENT_SECRET", hint: "OAuth 2.0 client secret" },
-        { name: "GMAIL_REFRESH_TOKEN", hint: "Refresh token from OAuth flow" },
-      ],
-    },
-    {
-      icon: Terminal,
-      title: "Run your first ingest",
-      description:
-        "Run the CLI command below to pull events from all connected sources. This typically takes a few minutes depending on volume.",
-      buttonLabel: "Done!",
-      onClick: dismiss,
-      command: "npx workflow-miner ingest --source all",
-    },
-  ];
-
-  const steps = desktop ? desktopSteps : hostedSteps;
 
   if (completed) return null;
 
@@ -194,32 +124,6 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                 {current.description}
               </p>
 
-              {current.envVars && (
-                <div className="mt-5 w-full space-y-2 text-left">
-                  {current.envVars.map((v) => (
-                    <div
-                      key={v.name}
-                      className="rounded-lg border border-border bg-muted/50 px-4 py-2.5"
-                    >
-                      <code className="text-sm font-semibold text-foreground">
-                        {v.name}
-                      </code>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {v.hint}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {current.command && (
-                <div className="mt-5 w-full rounded-lg border border-border bg-muted/50 px-4 py-3 text-left">
-                  <code className="text-sm font-mono text-foreground">
-                    {current.command}
-                  </code>
-                </div>
-              )}
-
               <Button
                 size="lg"
                 disabled={busy}
@@ -246,7 +150,6 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
             </motion.div>
           </AnimatePresence>
 
-          {/* Step indicator dots */}
           <div className="mt-8 flex items-center justify-center gap-2">
             {steps.map((_, i) => (
               <motion.div

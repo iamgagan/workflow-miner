@@ -1,8 +1,29 @@
-import { createLocalShimClient, type LocalShimClient } from "./local-shim";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
 
-// Desktop-only: every call returns the PGlite-backed shim. There is no
-// hosted Supabase path anymore, so the SSR client and its cookie handling
-// are gone.
-export async function createClient(): Promise<LocalShimClient> {
-  return createLocalShimClient();
+export async function createClient() {
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {
+            // The `setAll` method was called from a Server Component.
+            // This can be ignored if you have middleware refreshing
+            // user sessions.
+          }
+        },
+      },
+    }
+  );
 }

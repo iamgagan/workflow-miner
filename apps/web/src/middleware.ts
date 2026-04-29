@@ -1,11 +1,8 @@
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { type NextRequest } from "next/server";
+import { updateSession } from "./lib/supabase/middleware";
 
-// Desktop-only: no hosted auth, no redirects. Kept as a passthrough so the
-// matcher continues to exclude static assets and any future desktop-mode
-// request shaping has an obvious home.
-export function middleware(_request: NextRequest) {
-  return NextResponse.next();
+export async function middleware(request: NextRequest) {
+  return await updateSession(request);
 }
 
 export const config = {

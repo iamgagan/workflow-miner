@@ -1,288 +1,227 @@
-# Workflow Miner
+# Workflow Miner — Company Brain
 
-**The observability layer for AI automation, as a local-first macOS app.** Workflow Miner watches how you already work across Gmail, Slack, Linear, Google Calendar, GitHub, Notion, Jira, and Outlook — then surfaces the workflow patterns your team actually repeats, scored by confidence and frequency, and exports each pattern to the runtime of your choice: **Claude, n8n, Zapier, or generic JSON**.
+**An observability + RAG layer for how your company actually works.** Workflow Miner connects to Gmail, Slack, Linear, Google Calendar, GitHub, Notion, Jira, and Outlook; embeds every event into a vector-searchable brain; mines the recurring patterns your team repeats; and exposes the result as **a chat agent** that can answer questions across the whole knowledge graph and trigger detected workflows on demand.
 
-**Your data never leaves your Mac.** The brain database is an embedded Postgres (PGlite) file in `~/Library/Application Support/WorkflowMiner/brain`. OAuth refresh tokens live in the macOS Keychain. The bundled Next.js server binds to `127.0.0.1:<random port>` and is not reachable on the local network. There is no cloud component to trust.
+```
+┌─────────────────┐    ┌────────────────┐    ┌─────────────────┐
+│  Connectors     │───▶│  Inngest sync  │───▶│  Supabase brain │
+│  (Gmail/Slack/  │    │  + embed step  │    │  (pgvector,     │
+│   Linear/...)   │    │  (text-embed-3)│    │   RLS by org)   │
+└─────────────────┘    └────────────────┘    └────────┬────────┘
+                                                      │
+                                            ┌─────────▼─────────┐
+                                            │  Brain agent      │
+                                            │  (gpt-4o + tools) │
+                                            │  /brain  /api/... │
+                                            └───────────────────┘
+```
 
-For shell internals, signing, notarization, and troubleshooting see [`apps/desktop/README.md`](apps/desktop/README.md).
+> **About the desktop app.** A local-first macOS app shipped as v0.1.0-alpha.1 on 2026-04-28 (Tauri shell + PGlite). It is now **frozen** while the cloud Company Brain is the active product line — see [`apps/desktop/README.md`](apps/desktop/README.md) for the snapshot and how to revive the local-first build.
 
 ## Architecture
 
 ```
-workflow-miner-monorepo/
+workflow-miner/
 ├── apps/
-│   ├── web/                  # Next.js 15 dashboard + API (runs as Tauri sidecar)
-│   │   ├── src/
-│   │   │   ├── app/          # Pages & API routes
-│   │   │   ├── components/   # React components (shadcn/ui)
-│   │   │   └── lib/          # Local-shim (PGlite), desktop bridge, utilities
-│   │   └── e2e/              # Playwright E2E tests
-│   └── desktop/              # macOS Tauri shell (wraps apps/web locally)
-│       ├── src-tauri/        # Rust shell, Keychain, OAuth loopback
-│       ├── scripts/          # Next.js sidecar bootstrap + build helpers
-│       └── resources/        # Splash + bundled standalone Next.js output
+│   ├── web/                  # Next.js 15 dashboard + APIs (the cloud product)
+│   │   └── src/
+│   │       ├── app/
+│   │       │   ├── (dashboard)/  # connectors, patterns, skills, settings
+│   │       │   ├── brain/        # the chat UI for the Company Brain agent
+│   │       │   ├── login/        # magic link + Google OAuth signin
+│   │       │   ├── invite/accept # team-invite redemption
+│   │       │   ├── auth/callback # OAuth + magic link landing
+│   │       │   └── api/
+│   │       │       ├── brain/agent       # streaming agent (Vercel AI SDK)
+│   │       │       ├── inngest           # Inngest webhook
+│   │       │       ├── orgs/{invite,accept}
+│   │       │       ├── sync              # dispatches sync jobs to Inngest
+│   │       │       └── connectors/...
+│   │       ├── inngest/          # Inngest client + functions
+│   │       │                     #  - syncOrganizationData (per-source sync)
+│   │       │                     #  - executePattern (workflow trigger)
+│   │       └── lib/supabase/     # cloud Supabase factories (browser/server/admin)
+│   └── desktop/              # FROZEN: macOS Tauri shell from v0.1.0-alpha.1
 └── packages/
     └── engine/               # @workflow-miner/engine
         └── src/
-            ├── connectors/   # Gmail, Slack, Linear, Calendar APIs
+            ├── connectors/   # Gmail, Slack, Linear, Calendar, GitHub, Notion, Jira, Outlook
             ├── mining/       # PrefixSpan pattern detection
             ├── normalize/    # Raw events → standard schema
-            ├── brain/        # Local Postgres persistence layer
+            ├── brain/        # schema.sql (RLS, pgvector, RPCs, org trigger)
             ├── pipeline/     # Ingestion orchestration
             ├── compiler/     # Pattern → Claude skill pack
             └── cli/          # CLI commands
 ```
 
-### How the app is wired
-
-The desktop app reuses the entire Next.js dashboard. The Tauri shell sets `WORKFLOW_MINER_MODE=desktop` when spawning the Next.js sidecar, and the app rewires itself around a local PGlite database:
-
-- **`apps/web/src/lib/supabase/local-shim.ts`** — a PGlite-backed shim that implements the small subset of the Supabase JS client (`from`, `select`, `eq`, `in`, `or`, `gte`, `lt`, `order`, `limit`, `single`, `insert`, `upsert`, `auth.getUser`) that the codebase actually calls. The existing `schema.sql` runs verbatim because PGlite is real WASM Postgres.
-- **`apps/web/src/lib/supabase/{server,admin}.ts`** — factories that return the local shim in desktop mode.
-- **`apps/web/src/middleware.ts`** — skips auth in desktop mode (single local user).
-- **`apps/web/src/lib/local-brain-client.ts`** — drop-in replacement for the engine's `BrainClient`, used by the sync route.
-- **`apps/web/src/lib/desktop-bridge.ts`** — renderer-side bridge into the Tauri shell for Keychain access and OAuth loopback flows.
-- **`apps/desktop/src-tauri/`** — Rust shell that picks a free 127.0.0.1 port, spawns the Next.js sidecar, hosts macOS Keychain commands, and runs the OAuth loopback listener.
-
-### Data Flow
-
-```
-1. SYNC     Connectors pull raw events from Gmail/Slack/Linear/Calendar
-               ↓
-2. NORMALIZE Events converted to standard schema (EventType, EntityType)
-               ↓
-3. INGEST   Normalized events written to brain_timeline (local PGlite)
-               ↓
-4. MINE     Sessionizer groups by time gaps → PatternMiner detects sequences
-               ↓
-5. SCORE    Patterns ranked by frequency, recency, consistency, complexity
-               ↓
-6. EXPORT   Compile patterns into Claude skill packs (YAML/JSON)
-```
-
-## Tech Stack
+### Tech stack
 
 | Layer | Technology |
 |-------|-----------|
-| Frontend | Next.js 15, React 19, Tailwind CSS, Radix UI, Framer Motion, Recharts |
-| Backend | Next.js API routes running as a Tauri sidecar |
-| Brain DB | PGlite (embedded Postgres, WASM) |
-| Engine | TypeScript, PrefixSpan algorithm, Zod validation |
-| LLM | OpenRouter (Claude) for chat coaching and nudges |
-| Shell | Tauri 2 (Rust) — macOS window, Keychain, OAuth loopback |
-| Testing | Playwright (E2E), Vitest (engine unit tests) |
-| Deploy | macOS .app (Tauri) |
+| Frontend | Next.js 15, React 19, Tailwind, Radix UI, Framer Motion, Recharts |
+| Backend | Next.js API routes |
+| Brain DB | Supabase Postgres + `pgvector` + Row Level Security |
+| Auth | Supabase Auth — magic link + Google OAuth |
+| Background jobs | Inngest (sync, embed, pattern execute) |
+| Embeddings | OpenAI `text-embedding-3-small` (1536-dim, HNSW indexed) |
+| Brain agent | OpenAI `gpt-4o` via Vercel AI SDK with tool use |
+| Engine | TypeScript, PrefixSpan, Zod |
+| Testing | Playwright (E2E), Vitest (engine units) |
 
-## Getting Started
+## Getting started
 
-Local-first. Runs only on your Mac, no hosted accounts, no cloud database.
+### 1. Prerequisites
 
-### Prerequisites
+- Node.js >= 20, pnpm >= 8
+- A [Supabase](https://app.supabase.com) project (free tier works)
+- An [OpenAI](https://platform.openai.com) API key with access to `text-embedding-3-small` and `gpt-4o`
+- (Optional, for production) An [Inngest](https://app.inngest.com) account for background jobs
 
-- macOS (Apple Silicon or Intel)
-- Node.js >= 20.0.0
-- pnpm >= 8
-- Rust toolchain (`rustup`)
-- Google Cloud Console project (for Gmail + Calendar OAuth)
-- [OpenRouter](https://openrouter.ai) API key (for LLM features)
-
-### 1. Clone and Install
+### 2. Install + configure
 
 ```bash
-brew install pnpm rustup
-rustup-init -y
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-
-git clone <repo-url>
+git clone https://github.com/iamgagan/workflow-miner
 cd workflow-miner
 pnpm install
+cp .env.example .env.local
+$EDITOR .env.local
 ```
 
-### 2. Configure Google OAuth
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. Create an OAuth client of type **Desktop application**
-3. Enable **Gmail API** and **Google Calendar API** on the project
-4. Copy the Client ID and Client Secret into your env file:
-
-```bash
-cp apps/desktop/.env.example apps/desktop/.env.local
-$EDITOR apps/desktop/.env.local
-```
-
-**`apps/desktop/.env.local`** (required for Google connectors):
+Required env vars (also documented in `.env.example`):
 
 ```env
-GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
-GMAIL_CLIENT_SECRET=GOCSPX-...
-NEXT_PUBLIC_GMAIL_CLIENT_ID=your-client-id.apps.googleusercontent.com
+# Supabase (https://app.supabase.com → your project → Settings → API)
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
 
-# OpenRouter (for chat coach + nudges + digest summaries)
-OPEN_ROUTER_API_KEY=sk-or-v1-...
+# OpenAI (embeddings + brain agent)
+OPENAI_API_KEY=
+
+# Inngest (leave blank for local `npx inngest-cli dev`)
+INNGEST_EVENT_KEY=
+INNGEST_SIGNING_KEY=
 ```
 
-See [`apps/desktop/.env.example`](apps/desktop/.env.example) for the full list of optional variables (data directory override, standalone desktop-mode testing).
+### 3. Apply the schema
 
-### 3. Run the app
+In your Supabase project's SQL editor, run [`packages/engine/src/brain/schema.sql`](packages/engine/src/brain/schema.sql). This creates the brain tables (`brain_pages`, `brain_timeline`, `brain_links`, `brain_tags`), the multi-tenant indexes, the HNSW indexes for vector search, the `match_timeline_entries` and `match_brain_pages` RPCs, the `provision_user_organization` trigger that auto-assigns each new user a personal org, and the `org_members` / `org_invites` tables for team workspaces.
+
+### 4. Configure Supabase Auth
+
+In your Supabase dashboard:
+1. **Authentication → Providers → Email** — enable, allow magic links.
+2. **Authentication → Providers → Google** — enable, paste your Google OAuth client ID + secret.
+3. **Authentication → URL Configuration** — set **Site URL** to your deployment URL and add `<site>/auth/callback` as a **Redirect URL**.
+
+### 5. Run
 
 ```bash
-pnpm desktop:dev
+# In one terminal — Next.js
+pnpm --filter web dev
+
+# In another — local Inngest dev server
+npx inngest-cli@latest dev
 ```
 
-The Tauri shell launches a native window, spawns the Next.js sidecar on a random localhost port, and opens the dashboard. The brain database is created on first launch at `~/Library/Application Support/WorkflowMiner/brain`.
+Open <http://localhost:3000>, sign in via magic link, and visit `/brain` to chat with the Company Brain agent. Visit `/connectors` to wire up Gmail/Slack/etc.
 
-See [`apps/desktop/README.md`](apps/desktop/README.md) for the full shell architecture, signing/notarization steps, and troubleshooting.
+## Two product modes
 
-## Usage
+| Mode | DB | Auth | Distribution | Status |
+|------|----|------|--------------|--------|
+| **Company Brain (cloud)** | Supabase Postgres + pgvector + RLS | Supabase Auth (magic link / Google) | Web app, multi-tenant | **Active** |
+| Local-first Mac app | PGlite (file in `~/Library/Application Support/WorkflowMiner/brain`) | macOS Keychain (single user) | Signed `.app`, Tauri shell | Frozen at v0.1.0-alpha.1 |
 
-### Connecting Sources
+The cloud product is multi-tenant by `organization_id`. Every table is RLS-scoped, every embedding is HNSW-indexed, and every multi-user workspace is invite-based via `/api/orgs/invite` + `/api/orgs/accept`.
 
-1. Navigate to **Connectors** in the app
-2. Click **Connect with Google** to authorize Gmail + Calendar via the OAuth loopback flow — tokens land in the macOS Keychain
-3. For Slack and Linear, paste API tokens in the settings UI
-4. Click **Sync Now** to pull events from connected sources
+## Pipeline
 
-### Viewing Patterns
+```
+1. SYNC      User triggers `/api/sync?source=...`. The route dispatches an
+             `org/sync.requested` event per source to Inngest.
+2. INGEST    Inngest's `syncOrganizationData` function pulls the connector,
+             normalizes events, and writes to `brain_pages` / `brain_timeline`
+             via CloudBrainClient — embedding each page and timeline entry on
+             write with `text-embedding-3-small`.
+3. MINE      PrefixSpan over the timeline detects repeated subsequences;
+             each pattern lands as a `brain_pages` row of `type='pattern'`.
+4. ASK       The /brain chat UI streams from `/api/brain/agent` (gpt-4o)
+             which can call `searchCompanyKnowledge` (HNSW cosine search via
+             `match_timeline_entries`), `getOrganizationPatterns`, and
+             `triggerWorkflow` (dispatches to Inngest's `executePattern`).
+5. EXPORT    Patterns can be compiled into Claude skill packs / n8n / Zapier
+             via the `/skills` route (the desktop alpha's compiler is reused).
+```
 
-After syncing data:
-
-1. Go to **Patterns** to see detected workflow patterns
-2. Click **Mine Patterns** to run the PrefixSpan algorithm on your timeline data
-3. Each pattern shows:
-   - **Confidence score** (composite of frequency, recency, consistency)
-   - **Source breakdown** (which tools contribute)
-   - **Workflow graph** (visual step sequence)
-   - **Evidence panel** (supporting events)
-
-### AI Coaching
-
-The chat interface (bottom-right floating button) uses OpenRouter to provide:
-
-- Workflow optimization suggestions
-- Pattern-based insights
-- Productivity coaching nudges
-
-Coach nudges appear automatically based on detected patterns and activity trends.
-
-### Exporting Skills
-
-Navigate to **Skills** to export detected patterns as Claude skill packs that can be deployed to automate recurring workflows.
-
-## Engine CLI
-
-The engine package also works as a standalone CLI:
+## Inviting teammates
 
 ```bash
-cd packages/engine
-
-# Ingest from a specific source
-npx workflow-miner ingest --source gmail
-
-# Run pattern mining
-npx workflow-miner mine
-
-# Export patterns as skill packs
-npx workflow-miner export --format yaml
+# Sign in as the org owner, then:
+curl -X POST $SITE/api/orgs/invite \
+  -H "Cookie: $YOUR_SUPABASE_SESSION_COOKIE" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "teammate@yourcompany.com"}'
+# → { inviteUrl: "https://.../invite/accept?token=..." }
 ```
 
-## API Reference
+Send the URL to your teammate. After they sign in and accept, their JWT carries the org's `organization_id` and RLS lets them see the same brain.
 
-### Data APIs
+## API reference (cloud product)
 
+### Brain agent
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/dashboard` | Dashboard stats (events, patterns, sources) |
-| `GET` | `/api/activity` | Recent activity timeline (20 entries) |
-| `GET` | `/api/patterns` | List detected patterns with scores |
-| `POST` | `/api/patterns/mine` | Trigger pattern mining on timeline data |
-| `GET` | `/api/patterns/[id]` | Single pattern details |
-| `GET` | `/api/patterns/[id]/evidence` | Evidence events for a pattern |
+| `POST` | `/api/brain/agent` | Streaming chat with `gpt-4o`, tools: `searchCompanyKnowledge`, `getOrganizationPatterns`, `triggerWorkflow` |
 
-### Connector APIs
-
+### Org management
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/connectors/status` | Connection status for all providers |
-| `GET` | `/api/connectors/google/authorize` | Start Google OAuth flow |
-| `GET` | `/api/connectors/google/callback` | OAuth callback (stores tokens in Keychain) |
-| `POST` | `/api/sync` | Sync all connected sources |
+| `POST` | `/api/orgs/invite` | Issue an invite token for a teammate |
+| `POST` | `/api/orgs/accept` | Redeem an invite token; calls `accept_org_invite()` |
 
-### AI APIs
-
+### Background jobs
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/chat` | LLM coaching chat (OpenRouter) |
-| `GET` | `/api/coach` | AI coaching nudges |
+| `*`    | `/api/inngest` | Inngest webhook (handles `org/sync.requested`, `pattern/execute.requested`) |
+| `POST` | `/api/sync?source=all` | Dispatches sync jobs for the caller's org |
 
-### Admin APIs
-
+### Connectors
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/admin/setup-brain` | Initialize brain database tables (runs automatically on first launch) |
-| `POST` | `/api/admin/seed-brain` | Populate demo data (development only) |
-| `GET` | `/api/digest` | Generate weekly digest |
+| `GET`  | `/api/connectors/status` | Connection status for all providers |
+| `GET`  | `/api/connectors/google/authorize` | Start Google OAuth flow |
+| `GET`  | `/api/connectors/google/callback` | OAuth callback — stores tokens |
+
+### Data (read paths)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/api/dashboard` | Dashboard stats (events, patterns, sources) |
+| `GET`  | `/api/activity` | Recent activity timeline |
+| `GET`  | `/api/patterns` | Detected patterns with scores |
+| `GET`  | `/api/patterns/[id]` | Single pattern details |
+| `GET`  | `/api/patterns/[id]/evidence` | Supporting events for a pattern |
+
+### Dev / admin
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/api/seed` | Insert sample brain data (dev only — disabled in `NODE_ENV=production`) |
+| `POST` | `/api/admin/setup-brain` | Initialize brain tables (idempotent) |
 
 ## Testing
 
-### E2E Tests (Playwright)
-
 ```bash
-cd apps/web
+# Engine unit tests
+pnpm --filter @workflow-miner/engine test
 
-# Run all E2E tests
-npx playwright test
-
-# Run with UI
-npx playwright test --ui
-
-# Run specific test file
-npx playwright test e2e/dashboard.spec.ts
+# Web E2E (Playwright)
+cd apps/web && npx playwright test
 ```
 
-### Engine Unit Tests (Vitest)
+## Deployment
 
-```bash
-cd packages/engine
-npm test
-```
-
-## Building a release
-
-Produce a signed, notarization-ready universal `.app`:
-
-```bash
-pnpm desktop:build:universal
-```
-
-Output lands in `apps/desktop/src-tauri/target/universal-apple-darwin/release/bundle/`. See [`apps/desktop/README.md`](apps/desktop/README.md) for signing and notarization details.
-
-## Project Structure Details
-
-### Pages
-
-| Route | Description |
-|-------|-------------|
-| `/` | Landing page with hero, features, pattern demo |
-| `/dashboard` | Main dashboard with stats, charts, recent patterns |
-| `/patterns` | Browse and search detected patterns |
-| `/patterns/[id]` | Pattern detail with workflow graph and evidence |
-| `/connectors` | Manage OAuth connections to data sources |
-| `/skills` | View and export skill packs |
-| `/replay` | Replay workflow event sequences |
-| `/settings` | User preferences and configuration |
-
-### Engine Modules
-
-| Module | Purpose |
-|--------|---------|
-| `connectors/` | Gmail, Slack, Linear, Calendar API integrations |
-| `mining/` | PrefixSpan-based pattern detection + scoring |
-| `normalize/` | Convert raw events to standard schema |
-| `brain/` | Local Postgres persistence (timeline + pages) |
-| `pipeline/` | Orchestrate ingest flow (connect → normalize → write) |
-| `compiler/` | Generate Claude skill packs from patterns |
-| `cli/` | Command-line interface for standalone usage |
+The cloud product deploys cleanly to **Vercel**. Set every env var from `.env.example` in the Vercel project, point your Supabase project's redirect URL at `<site>/auth/callback`, and run the `inngest-cli` either as a Vercel cron, on Inngest's hosted runner, or alongside your own infra. See [`docs/DEPLOY.md`](docs/DEPLOY.md) if it exists, or the existing `vercel.json` in the repo root.
 
 ## License
 
-Private - All rights reserved.
+Private — All rights reserved.
