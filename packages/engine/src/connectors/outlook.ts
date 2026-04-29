@@ -67,7 +67,9 @@ export class OutlookConnector implements ConnectorInterface {
     this.fetchFn = fetchFn ?? (globalThis.fetch as unknown as FetchFn);
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const clientId = config.credentials["OUTLOOK_CLIENT_ID"];
     const clientSecret = config.credentials["OUTLOOK_CLIENT_SECRET"];
     const refreshToken = config.credentials["OUTLOOK_REFRESH_TOKEN"];
@@ -109,7 +111,7 @@ export class OutlookConnector implements ConnectorInterface {
       });
     }
 
-    return events;
+    yield events;
   }
 
   private async refreshAccessToken(

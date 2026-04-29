@@ -50,12 +50,15 @@ export {
   OutlookConnector,
   SlackConnector,
 } from "./connectors/index.js";
+export { getAllEvents } from "./connectors/types.js";
 export type {
   RawEvent,
   RawParticipant,
   ConnectorConfig,
   ConnectorInterface,
 } from "./connectors/types.js";
+
+export { isMechanicalEventType } from "./normalize/schema.js";
 
 // Pipeline
 export { runIngest } from "./pipeline/ingest.js";

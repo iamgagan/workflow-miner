@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { JiraConnector } from "./jira.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function mockJiraIssue(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,10 +53,10 @@ describe("JiraConnector", () => {
   it("throws when JIRA_EMAIL, JIRA_API_TOKEN, or JIRA_DOMAIN is missing", async () => {
     const connector = new JiraConnector();
     await expect(
-      connector.fetchEvents({ credentials: { JIRA_EMAIL: "x", JIRA_API_TOKEN: "y" }, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: { JIRA_EMAIL: "x", JIRA_API_TOKEN: "y" }, lookbackDays: 7 }),
     ).rejects.toThrow(/Missing JIRA_/);
     await expect(
-      connector.fetchEvents({ credentials: { JIRA_API_TOKEN: "y", JIRA_DOMAIN: "z" }, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: { JIRA_API_TOKEN: "y", JIRA_DOMAIN: "z" }, lookbackDays: 7 }),
     ).rejects.toThrow(/Missing JIRA_/);
   });
 
@@ -65,7 +65,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(fetchFn).toHaveBeenCalledOnce();
     const [url, init] = fetchFn.mock.calls[0];
@@ -114,7 +114,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const closed = events.filter((e) => e.type === "issue_closed");
     expect(closed).toHaveLength(1);
     expect(closed[0].id).toBe("jira-resolved-10001");
@@ -130,7 +130,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events.filter((e) => e.type === "issue_closed")).toHaveLength(0);
   });
 
@@ -157,7 +157,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const updated = events.filter((e) => e.type === "issue_updated");
 
     expect(updated).toHaveLength(1);
@@ -191,7 +191,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events.filter((e) => e.type === "issue_updated")).toHaveLength(0);
   });
 
@@ -216,7 +216,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const comments = events.filter((e) => e.type === "comment_added");
 
     expect(comments).toHaveLength(1);
@@ -249,7 +249,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const comments = events.filter((e) => e.type === "comment_added");
     expect(comments[0].data.commentBody).toContain("Hello");
   });
@@ -262,7 +262,7 @@ describe("JiraConnector", () => {
     });
 
     const connector = new JiraConnector(fetchFn);
-    await expect(connector.fetchEvents(baseConfig)).rejects.toThrow("Jira API error: HTTP 401");
+    await expect(getAllEvents(connector, baseConfig)).rejects.toThrow("Jira API error: HTTP 401");
   });
 
   it("handles issues without assignee or priority", async () => {
@@ -276,7 +276,7 @@ describe("JiraConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new JiraConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const created = events.filter((e) => e.type === "issue_created");
     expect(created).toHaveLength(1);
     // Only reporter, no assignee

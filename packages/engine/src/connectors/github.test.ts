@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { GitHubConnector } from "./github.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function mockIssue(overrides: Record<string, unknown> = {}) {
   return {
@@ -71,14 +71,14 @@ describe("GitHubConnector", () => {
   it("throws when GITHUB_TOKEN is missing", async () => {
     const connector = new GitHubConnector();
     await expect(
-      connector.fetchEvents({ credentials: { GITHUB_REPOS: "a/b" }, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: { GITHUB_REPOS: "a/b" }, lookbackDays: 7 }),
     ).rejects.toThrow("Missing GITHUB_TOKEN in credentials");
   });
 
   it("throws when GITHUB_REPOS is missing", async () => {
     const connector = new GitHubConnector();
     await expect(
-      connector.fetchEvents({ credentials: { GITHUB_TOKEN: "ghp" }, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: { GITHUB_TOKEN: "ghp" }, lookbackDays: 7 }),
     ).rejects.toThrow("Missing GITHUB_REPOS");
   });
 
@@ -86,7 +86,7 @@ describe("GitHubConnector", () => {
     const fetchFn = makeFetchFn([mockIssue()], []);
     const connector = new GitHubConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const created = events.filter((e) => e.type === "issue_created");
 
     expect(created).toHaveLength(1);
@@ -116,7 +116,7 @@ describe("GitHubConnector", () => {
     const fetchFn = makeFetchFn([mockPR()], []);
     const connector = new GitHubConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const opened = events.filter((e) => e.type === "pr_opened");
 
     expect(opened).toHaveLength(1);
@@ -136,7 +136,7 @@ describe("GitHubConnector", () => {
     );
     const connector = new GitHubConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events.filter((e) => e.type === "issue_closed")).toHaveLength(1);
     expect(events.filter((e) => e.type === "pr_merged")).toHaveLength(1);
   });
@@ -154,7 +154,7 @@ describe("GitHubConnector", () => {
     const fetchFn = makeFetchFn([mockPR()], [], [review]);
     const connector = new GitHubConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const reviews = events.filter((e) => e.type === "review_submitted");
 
     expect(reviews).toHaveLength(1);
@@ -171,7 +171,7 @@ describe("GitHubConnector", () => {
     const fetchFn = makeFetchFn([], [mockCommit()]);
     const connector = new GitHubConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const commits = events.filter((e) => e.type === "commit_pushed");
 
     expect(commits).toHaveLength(1);
@@ -194,7 +194,7 @@ describe("GitHubConnector", () => {
     const fetchFn = makeFetchFn([], [mockCommit({ author: null })]);
     const connector = new GitHubConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const commits = events.filter((e) => e.type === "commit_pushed");
     expect(commits).toHaveLength(1);
     expect(commits[0].participants[0]).toEqual({
@@ -208,7 +208,7 @@ describe("GitHubConnector", () => {
     const fetchFn = makeFetchFn([mockIssue()], []);
     const connector = new GitHubConnector(fetchFn);
 
-    await connector.fetchEvents(baseConfig);
+    await getAllEvents(connector, baseConfig);
 
     const firstCall = fetchFn.mock.calls[0];
     expect(firstCall[1].headers.Authorization).toBe("Bearer ghp_test");
@@ -229,7 +229,7 @@ describe("GitHubConnector", () => {
     });
 
     const connector = new GitHubConnector(fetchFn);
-    const events = await connector.fetchEvents({
+    const events = await getAllEvents(connector, {
       credentials: { GITHUB_TOKEN: "ghp", GITHUB_REPOS: "acme/repo1, acme/repo2" },
       lookbackDays: 7,
     });
@@ -246,6 +246,6 @@ describe("GitHubConnector", () => {
       json: async () => ({}),
     });
     const connector = new GitHubConnector(fetchFn);
-    await expect(connector.fetchEvents(baseConfig)).rejects.toThrow("GitHub API error: HTTP 401");
+    await expect(getAllEvents(connector, baseConfig)).rejects.toThrow("GitHub API error: HTTP 401");
   });
 });

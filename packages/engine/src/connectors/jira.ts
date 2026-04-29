@@ -63,7 +63,9 @@ export class JiraConnector implements ConnectorInterface {
     this.fetchFn = fetchFn ?? (globalThis.fetch as unknown as FetchFn);
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const email = config.credentials["JIRA_EMAIL"];
     const apiToken = config.credentials["JIRA_API_TOKEN"];
     const domain = config.credentials["JIRA_DOMAIN"]; // e.g. "mycompany.atlassian.net"
@@ -154,7 +156,7 @@ export class JiraConnector implements ConnectorInterface {
       }
     }
 
-    return events;
+    yield events;
   }
 
   private async fetchIssues(email: string, apiToken: string, domain: string, since: string): Promise<JiraIssue[]> {

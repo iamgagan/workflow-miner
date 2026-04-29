@@ -22,17 +22,21 @@ function makeConnector(
   source: string,
   events: readonly RawEvent[] = [makeRawEvent({ source })],
 ): ConnectorInterface {
-  return {
-    source,
-    fetchEvents: vi.fn().mockResolvedValue(events),
-  };
+  const fetchEvents = vi.fn(async function* (): AsyncIterable<readonly RawEvent[]> {
+    if (events.length > 0) {
+      yield events;
+    }
+  });
+  return { source, fetchEvents };
 }
 
 function makeFailingConnector(source: string, error: string): ConnectorInterface {
-  return {
-    source,
-    fetchEvents: vi.fn().mockRejectedValue(new Error(error)),
-  };
+  const fetchEvents = vi.fn(async function* (): AsyncIterable<readonly RawEvent[]> {
+    throw new Error(error);
+    // eslint-disable-next-line no-unreachable
+    yield [];
+  });
+  return { source, fetchEvents };
 }
 
 const baseConfig: Config = {

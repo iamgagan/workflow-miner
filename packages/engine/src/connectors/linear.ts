@@ -119,7 +119,9 @@ export class LinearConnector implements ConnectorInterface {
     this.fetchFn = fetchFn ?? (globalThis.fetch as unknown as FetchFn);
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const apiKey = config.credentials["LINEAR_API_KEY"];
     if (!apiKey) {
       throw new Error("Missing LINEAR_API_KEY in credentials");
@@ -128,14 +130,7 @@ export class LinearConnector implements ConnectorInterface {
     const updatedAfter = new Date();
     updatedAfter.setDate(updatedAfter.getDate() - config.lookbackDays);
 
-    const issues = await this.fetchAllIssues(updatedAfter, apiKey);
-    return issues.flatMap((issue) => this.issueToRawEvents(issue));
-  }
-
-  private async fetchAllIssues(updatedAfter: Date, apiKey: string): Promise<readonly LinearIssueNode[]> {
-    const allIssues: LinearIssueNode[] = [];
     let cursor: string | null = null;
-
     do {
       const response = await this.graphql(apiKey, ISSUES_QUERY, {
         after: cursor,
@@ -144,11 +139,12 @@ export class LinearConnector implements ConnectorInterface {
 
       const body = response as LinearIssuesResponse;
       const { nodes, pageInfo } = body.data.issues;
-      allIssues.push(...nodes);
+      const pageEvents = nodes.flatMap((issue) => this.issueToRawEvents(issue));
+      if (pageEvents.length > 0) {
+        yield pageEvents;
+      }
       cursor = pageInfo.hasNextPage ? pageInfo.endCursor : null;
     } while (cursor !== null);
-
-    return allIssues;
   }
 
   private async graphql(apiKey: string, query: string, variables: Record<string, unknown>): Promise<unknown> {

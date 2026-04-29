@@ -48,7 +48,9 @@ export class NotionConnector implements ConnectorInterface {
     this.fetchFn = fetchFn ?? (globalThis.fetch as unknown as FetchFn);
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const token = config.credentials["NOTION_TOKEN"];
     if (!token) throw new Error("Missing NOTION_TOKEN in credentials");
 
@@ -96,7 +98,7 @@ export class NotionConnector implements ConnectorInterface {
       }
     }
 
-    return events;
+    yield events;
   }
 
   private async searchRecentPages(token: string, since: Date): Promise<NotionPage[]> {

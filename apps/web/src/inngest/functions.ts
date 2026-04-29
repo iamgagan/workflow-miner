@@ -188,7 +188,7 @@ export const syncCompanyData = inngest.createFunction(
         default: throw new Error(`Unknown source: ${source}`);
       }
 
-      const rawEvents = await connector.fetchEvents({
+      const rawEvents = await engine.getAllEvents(connector, {
         credentials,
         lookbackDays,
       });

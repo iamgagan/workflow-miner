@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GmailConnector } from "./gmail.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function makeHeader(name: string, value: string) {
   return { name, value };
@@ -98,7 +98,7 @@ describe("GmailConnector", () => {
   it("throws when credentials are missing", async () => {
     const connector = new GmailConnector();
     await expect(
-      connector.fetchEvents({
+      getAllEvents(connector, {
         credentials: {},
         lookbackDays: 7,
       }),
@@ -121,7 +121,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events).toHaveLength(1);
     expect(events[0].id).toBe("gmail-msg1");
@@ -149,7 +149,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events[0].type).toBe("message_sent");
   });
@@ -170,7 +170,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events[0].type).toBe("decision_made");
   });
@@ -191,7 +191,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events[0].type).toBe("followup_assigned");
   });
@@ -241,7 +241,7 @@ describe("GmailConnector", () => {
     };
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events).toHaveLength(5);
     expect(mockGmail.users.threads.list).toHaveBeenCalledTimes(2);
@@ -261,7 +261,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     const participants = events[0].participants;
     expect(participants).toHaveLength(2);
@@ -301,7 +301,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events).toHaveLength(2);
     expect(events[0].data["isReply"]).toBe(true);
@@ -322,7 +322,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     const contentText = events[0].data["contentText"] as string;
     expect(contentText.length).toBeLessThanOrEqual(500);
@@ -332,7 +332,7 @@ describe("GmailConnector", () => {
     const mockGmail = makeMockGmail({ threads: [] });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events).toHaveLength(0);
   });
@@ -351,7 +351,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events[0].participants).toHaveLength(1);
   });
@@ -369,7 +369,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events[0].data["labelIds"]).toEqual(["INBOX", "IMPORTANT", "STARRED"]);
   });
@@ -410,7 +410,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect((events[0].data["contentText"] as string)).toContain("Plain text content here");
   });
@@ -436,7 +436,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     // Should NOT be followup_assigned because the action item is in the quoted part
     expect(events[0].type).toBe("message_received");
@@ -463,7 +463,7 @@ describe("GmailConnector", () => {
     });
 
     const connector = new GmailConnector(() => mockGmail as any);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events[0].type).toBe("decision_made");
   });

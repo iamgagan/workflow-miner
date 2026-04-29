@@ -169,7 +169,9 @@ export class GmailConnector implements ConnectorInterface {
       });
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const clientId = config.credentials["GMAIL_CLIENT_ID"];
     const clientSecret = config.credentials["GMAIL_CLIENT_SECRET"];
     const refreshToken = config.credentials["GMAIL_REFRESH_TOKEN"];
@@ -189,11 +191,11 @@ export class GmailConnector implements ConnectorInterface {
     const afterEpoch = Math.floor(afterDate.getTime() / 1000);
 
     const threadIds = await this.fetchThreadIds(gmail, afterEpoch);
-    const events: RawEvent[] = [];
 
     for (const threadId of threadIds) {
       const messages = await this.fetchThreadMessages(gmail, threadId);
       const isReplyChain = messages.length > 1;
+      const threadEvents: RawEvent[] = [];
 
       for (const message of messages) {
         const eventType = detectEventType(message, userEmail, isReplyChain);
@@ -201,7 +203,7 @@ export class GmailConnector implements ConnectorInterface {
           ? `${message.subject}: ${message.bodyPreview}`
           : message.bodyPreview;
 
-        events.push({
+        threadEvents.push({
           id: `gmail-${message.id}`,
           source: "gmail",
           type: eventType,
@@ -217,10 +219,11 @@ export class GmailConnector implements ConnectorInterface {
         });
       }
 
+      if (threadEvents.length > 0) {
+        yield threadEvents;
+      }
       await sleep(RATE_LIMIT_DELAY_MS);
     }
-
-    return events;
   }
 
   private async fetchThreadIds(

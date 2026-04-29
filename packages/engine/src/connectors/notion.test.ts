@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { NotionConnector } from "./notion.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function mockNotionPage(overrides: Record<string, unknown> = {}) {
   return {
@@ -43,7 +43,7 @@ describe("NotionConnector", () => {
   it("throws when NOTION_TOKEN is missing", async () => {
     const connector = new NotionConnector();
     await expect(
-      connector.fetchEvents({ credentials: {}, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: {}, lookbackDays: 7 }),
     ).rejects.toThrow("Missing NOTION_TOKEN in credentials");
   });
 
@@ -52,7 +52,7 @@ describe("NotionConnector", () => {
     const fetchFn = makeFetchFn([page]);
     const connector = new NotionConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(fetchFn).toHaveBeenCalledOnce();
     const [url, init] = fetchFn.mock.calls[0];
@@ -87,7 +87,7 @@ describe("NotionConnector", () => {
     const fetchFn = makeFetchFn([page]);
     const connector = new NotionConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(events).toHaveLength(1);
     expect(events[0].type).toBe("doc_updated");
@@ -105,7 +105,7 @@ describe("NotionConnector", () => {
     const fetchFn = makeFetchFn([page]);
     const connector = new NotionConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].data.title).toBe("My Doc");
   });
 
@@ -118,7 +118,7 @@ describe("NotionConnector", () => {
     const fetchFn = makeFetchFn([page]);
     const connector = new NotionConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].data.title).toBe("Untitled");
   });
 
@@ -130,7 +130,7 @@ describe("NotionConnector", () => {
     const fetchFn = makeFetchFn([page]);
     const connector = new NotionConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const personParticipants = events[0].participants.filter((p) => p.type === "person");
     expect(personParticipants).toHaveLength(2);
     expect(personParticipants.map((p) => p.id).sort()).toEqual(["user-1", "user-2"]);
@@ -156,7 +156,7 @@ describe("NotionConnector", () => {
     });
 
     const connector = new NotionConnector(fetchFn);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     // Only the recent page, and no second fetch
     expect(fetchFn).toHaveBeenCalledOnce();
@@ -181,7 +181,7 @@ describe("NotionConnector", () => {
       });
 
     const connector = new NotionConnector(fetchFn);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
     const secondBody = JSON.parse(fetchFn.mock.calls[1][1].body);
@@ -197,6 +197,6 @@ describe("NotionConnector", () => {
     });
 
     const connector = new NotionConnector(fetchFn);
-    await expect(connector.fetchEvents(baseConfig)).rejects.toThrow("Notion API error: HTTP 401");
+    await expect(getAllEvents(connector, baseConfig)).rejects.toThrow("Notion API error: HTTP 401");
   });
 });

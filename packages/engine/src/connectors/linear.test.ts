@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { LinearConnector } from "./linear.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function mockIssue(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,7 +53,7 @@ describe("LinearConnector", () => {
   it("throws when LINEAR_API_KEY is missing", async () => {
     const connector = new LinearConnector();
     await expect(
-      connector.fetchEvents({ credentials: {}, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: {}, lookbackDays: 7 }),
     ).rejects.toThrow("Missing LINEAR_API_KEY in credentials");
   });
 
@@ -62,7 +62,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(fetchFn).toHaveBeenCalledOnce();
     const callArgs = fetchFn.mock.calls[0];
@@ -123,7 +123,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const updated = events.filter((e) => e.type === "issue_updated");
 
     expect(updated).toHaveLength(2);
@@ -164,7 +164,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const assigned = events.filter((e) => e.type === "followup_assigned");
 
     expect(assigned).toHaveLength(1);
@@ -203,7 +203,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const assigned = events.filter((e) => e.type === "followup_assigned");
 
     expect(assigned).toHaveLength(1);
@@ -228,7 +228,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const messages = events.filter((e) => e.type === "message_sent");
 
     expect(messages).toHaveLength(1);
@@ -273,7 +273,7 @@ describe("LinearConnector", () => {
       });
 
     const connector = new LinearConnector(fetchFn);
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
 
@@ -294,7 +294,7 @@ describe("LinearConnector", () => {
 
     const connector = new LinearConnector(fetchFn);
     await expect(
-      connector.fetchEvents({ credentials: { LINEAR_API_KEY: "bad_key" }, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: { LINEAR_API_KEY: "bad_key" }, lookbackDays: 7 }),
     ).rejects.toThrow("Linear API error: HTTP 401");
   });
 
@@ -306,7 +306,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const created = events.filter((e) => e.type === "issue_created");
 
     expect(created).toHaveLength(1);
@@ -324,7 +324,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const created = events.filter((e) => e.type === "issue_created");
 
     expect(created[0].data).toEqual(
@@ -340,7 +340,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const created = events.filter((e) => e.type === "issue_created");
     expect(created[0].data).toEqual(expect.objectContaining({ description: "" }));
   });
@@ -362,7 +362,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const assigned = events.filter((e) => e.type === "followup_assigned");
     // Same from and to assignee — no event
     expect(assigned).toHaveLength(0);
@@ -391,7 +391,7 @@ describe("LinearConnector", () => {
     const fetchFn = makeFetchFn([issue]);
     const connector = new LinearConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     const ids = events.map((e) => e.id);
 
     expect(ids).toContain("linear-issue-issue-1");

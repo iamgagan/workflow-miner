@@ -137,7 +137,9 @@ export class SlackConnector implements ConnectorInterface {
     this.fetcher = fetcher ?? { fetch: globalThis.fetch.bind(globalThis) };
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const token = config.credentials["SLACK_BOT_TOKEN"];
     if (!token) {
       throw new Error("Missing SLACK_BOT_TOKEN in credentials");
@@ -155,12 +157,12 @@ export class SlackConnector implements ConnectorInterface {
     const userMap = await this.fetchUsers(token);
     const oldest = this.computeOldest(config.lookbackDays);
 
-    const allEvents: RawEvent[] = [];
     for (const channel of channels) {
+      const channelEvents: RawEvent[] = [];
       const messages = await this.fetchChannelMessages(token, channel, oldest);
       for (const msg of messages) {
         const events = this.messageToRawEvents(msg, channel, userMap);
-        allEvents.push(...events);
+        channelEvents.push(...events);
 
         if (msg.thread_ts === msg.ts && (msg.reply_count ?? 0) > 0) {
           const replies = await this.fetchThreadReplies(
@@ -175,13 +177,12 @@ export class SlackConnector implements ConnectorInterface {
               channel,
               userMap,
             );
-            allEvents.push(...replyEvents);
+            channelEvents.push(...replyEvents);
           }
         }
       }
+      yield channelEvents;
     }
-
-    return allEvents;
   }
 
   private messageToRawEvents(

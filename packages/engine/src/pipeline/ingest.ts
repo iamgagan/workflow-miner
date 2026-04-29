@@ -94,11 +94,83 @@ function toInsertEvent(event: NormalizedEvent): InsertEvent {
   };
 }
 
+interface SourceOutcome {
+  readonly source: SourceName;
+  readonly count: number;
+  readonly errors: readonly NormalizeError[];
+  readonly skipped: boolean;
+}
+
+async function ingestOneSource(
+  source: SourceName,
+  options: IngestOptions,
+  deps: IngestDependencies & { readonly normalizer: Normalizer; readonly connectors: Readonly<Record<string, ConnectorInterface>>; readonly log: (m: string) => void },
+): Promise<SourceOutcome> {
+  const { config, insertMany, normalizer, connectors, log } = deps;
+
+  const credentials = buildCredentials(config, source);
+  if (!credentials) {
+    log(`Skipping ${source}: not configured`);
+    return { source, count: 0, errors: [], skipped: true };
+  }
+
+  const connector = connectors[source];
+  if (!connector) {
+    log(`Skipping ${source}: no connector available`);
+    return { source, count: 0, errors: [], skipped: true };
+  }
+
+  const connectorConfig: ConnectorConfig = {
+    credentials,
+    lookbackDays: options.days,
+  };
+
+  const errors: NormalizeError[] = [];
+  let count = 0;
+
+  try {
+    let pageObserved = false;
+    for await (const page of connector.fetchEvents(connectorConfig)) {
+      pageObserved = true;
+      const { events: normalized, errors: pageErrors } = normalizer.normalize(page);
+      if (pageErrors.length > 0) {
+        for (const error of pageErrors) {
+          log(`Normalization error (${source}): ${error.rawEventId} — ${error.message}`);
+        }
+        errors.push(...pageErrors);
+      }
+
+      const insertEvents = normalized.map(toInsertEvent);
+      if (options.dryRun) {
+        log(`[dry-run] ${source}: ${insertEvents.length} events would be ingested`);
+      } else {
+        insertMany(insertEvents);
+      }
+      count += insertEvents.length;
+    }
+
+    // Preserve prior behavior: tests assert insertMany([]) is called when the
+    // connector yielded nothing, so we still emit a single empty insert.
+    if (!pageObserved && !options.dryRun) {
+      insertMany([]);
+    }
+
+    log(`${source}: ${count} events ingested`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`Error fetching from ${source}: ${message}`);
+    errors.push({ rawEventId: `${source}-fetch`, message });
+    return { source, count: 0, errors, skipped: false };
+  }
+
+  return { source, count, errors, skipped: false };
+}
+
 export async function runIngest(
   options: IngestOptions,
   deps: IngestDependencies,
 ): Promise<IngestResult> {
-  const { config, insertMany, log = console.log } = deps;
+  const log = deps.log ?? console.log;
   const normalizer = deps.normalizer ?? new Normalizer();
   const connectors = deps.connectors ?? defaultConnectors();
 
@@ -107,61 +179,30 @@ export async function runIngest(
       ? ALL_SOURCES
       : [options.source as SourceName];
 
+  const outcomes = await Promise.all(
+    sourcesToIngest.map((source) =>
+      ingestOneSource(source, options, { ...deps, log, normalizer, connectors }),
+    ),
+  );
+
   const sourceCounts: Record<string, number> = {};
   const allErrors: NormalizeError[] = [];
   const skippedSources: string[] = [];
   let totalEvents = 0;
 
-  for (const source of sourcesToIngest) {
-    const credentials = buildCredentials(config, source);
-    if (!credentials) {
-      log(`Skipping ${source}: not configured`);
-      skippedSources.push(source);
+  for (const outcome of outcomes) {
+    if (outcome.skipped) {
+      skippedSources.push(outcome.source);
       continue;
     }
-
-    const connector = connectors[source];
-    if (!connector) {
-      log(`Skipping ${source}: no connector available`);
-      skippedSources.push(source);
+    if (outcome.errors.length > 0 && outcome.count === 0 && outcome.errors[0].rawEventId.endsWith("-fetch")) {
+      // Pure fetch failure: preserve prior behavior of not adding to sourceCounts.
+      allErrors.push(...outcome.errors);
       continue;
     }
-
-    const connectorConfig: ConnectorConfig = {
-      credentials,
-      lookbackDays: options.days,
-    };
-
-    let rawEvents: readonly RawEvent[];
-    try {
-      rawEvents = await connector.fetchEvents(connectorConfig);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log(`Error fetching from ${source}: ${message}`);
-      allErrors.push({ rawEventId: `${source}-fetch`, message });
-      continue;
-    }
-
-    const { events: normalized, errors } = normalizer.normalize(rawEvents);
-
-    if (errors.length > 0) {
-      for (const error of errors) {
-        log(`Normalization error (${source}): ${error.rawEventId} — ${error.message}`);
-      }
-      allErrors.push(...errors);
-    }
-
-    const insertEvents = normalized.map(toInsertEvent);
-
-    if (options.dryRun) {
-      log(`[dry-run] ${source}: ${insertEvents.length} events would be ingested`);
-    } else {
-      insertMany(insertEvents);
-      log(`${source}: ${insertEvents.length} events ingested`);
-    }
-
-    sourceCounts[source] = insertEvents.length;
-    totalEvents += insertEvents.length;
+    sourceCounts[outcome.source] = outcome.count;
+    totalEvents += outcome.count;
+    allErrors.push(...outcome.errors);
   }
 
   return { totalEvents, sourceCounts, errors: allErrors, skippedSources };

@@ -11,6 +11,24 @@ export enum EventType {
   ArtifactShared = "artifact_shared",
 }
 
+const MECHANICAL_EVENT_TYPES: ReadonlySet<string> = new Set<string>([
+  EventType.MessageSent,
+  EventType.MessageReceived,
+  EventType.IssueCreated,
+  EventType.IssueUpdated,
+  EventType.FollowupAssigned,
+  EventType.ArtifactShared,
+]);
+
+/**
+ * True for event types that represent mechanical, low-decision actions
+ * (e.g. sending a message, opening an issue) and are therefore good
+ * automation candidates. Decisions and meetings are not mechanical.
+ */
+export function isMechanicalEventType(type: string): boolean {
+  return MECHANICAL_EVENT_TYPES.has(type);
+}
+
 export enum EntityType {
   Person = "person",
   Thread = "thread",

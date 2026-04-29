@@ -1,4 +1,4 @@
-import type { EventType } from "../normalize/schema.js";
+import { type EventType, isMechanicalEventType } from "../normalize/schema.js";
 
 /**
  * A single observed instance of a pattern — the sequence of event types
@@ -43,19 +43,6 @@ export interface ScoringWeights {
   readonly completionRate: number;
   readonly automationPotential: number;
 }
-
-/**
- * Event types considered "mechanical" (low decision-making) when
- * estimating automation potential.
- */
-const MECHANICAL_EVENT_TYPES: ReadonlySet<string> = new Set([
-  "message_sent",
-  "message_received",
-  "issue_created",
-  "issue_updated",
-  "followup_assigned",
-  "artifact_shared",
-]);
 
 const DEFAULT_WEIGHTS: ScoringWeights = {
   frequency: 0.3,
@@ -174,9 +161,7 @@ export class PatternScorer {
   private computeAutomationPotential(candidate: PatternCandidate): number {
     if (candidate.steps.length === 0) return 0;
 
-    const mechanical = candidate.steps.filter((s) =>
-      MECHANICAL_EVENT_TYPES.has(s),
-    ).length;
+    const mechanical = candidate.steps.filter(isMechanicalEventType).length;
 
     return Math.round((mechanical / candidate.steps.length) * 100);
   }

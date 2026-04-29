@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SlackConnector, type SlackFetcher } from "./slack.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function mockResponse(body: unknown): Response {
   return {
@@ -63,7 +63,7 @@ describe("SlackConnector", () => {
       const config = makeConfig({
         credentials: { SLACK_CHANNEL_IDS: "C123" },
       });
-      await expect(connector.fetchEvents(config)).rejects.toThrow(
+      await expect(getAllEvents(connector, config)).rejects.toThrow(
         "Missing SLACK_BOT_TOKEN",
       );
     });
@@ -73,7 +73,7 @@ describe("SlackConnector", () => {
       const config = makeConfig({
         credentials: { SLACK_BOT_TOKEN: "xoxb-test" },
       });
-      await expect(connector.fetchEvents(config)).rejects.toThrow(
+      await expect(getAllEvents(connector, config)).rejects.toThrow(
         "Missing SLACK_CHANNEL_IDS",
       );
     });
@@ -94,7 +94,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({
         id: "slack-C123-1700000000.000001",
@@ -122,7 +122,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events[0].timestamp).toEqual(new Date(1700000000 * 1000));
     });
   });
@@ -147,7 +147,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events[0].type).toBe("decision_made");
     });
 
@@ -170,7 +170,7 @@ describe("SlackConnector", () => {
         });
         connector = new SlackConnector(fetcher);
 
-        const events = await connector.fetchEvents(makeConfig());
+        const events = await getAllEvents(connector, makeConfig());
         expect(events[0].type).toBe("decision_made");
       }
     });
@@ -193,7 +193,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events[0].type).toBe("followup_assigned");
       expect(events[0].participants).toEqual(
         expect.arrayContaining([
@@ -218,7 +218,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events[0].type).toBe("message_sent");
     });
   });
@@ -240,7 +240,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events[0].type).toBe("artifact_shared");
       expect(events[0].data).toHaveProperty("urls");
     });
@@ -264,7 +264,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events[0].type).toBe("artifact_shared");
       expect(events[0].data).toHaveProperty("files");
     });
@@ -306,7 +306,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
       expect(events).toHaveLength(2);
       expect(events[0].id).toBe("slack-C123-1700000005.000000");
       expect(events[1].id).toBe("slack-C123-1700000006.000000");
@@ -331,7 +331,7 @@ describe("SlackConnector", () => {
       });
 
       connector = new SlackConnector({ fetch: fetchFn });
-      await connector.fetchEvents(makeConfig());
+      await getAllEvents(connector, makeConfig());
 
       const calls = fetchFn.mock.calls.map((c) => c[0] as string);
       expect(calls.some((u) => u.includes("conversations.replies"))).toBe(false);
@@ -363,7 +363,7 @@ describe("SlackConnector", () => {
       });
 
       connector = new SlackConnector({ fetch: fetchFn });
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
 
       expect(events).toHaveLength(2);
       expect(events[0].data).toMatchObject({ text: "Page 1" });
@@ -397,7 +397,7 @@ describe("SlackConnector", () => {
       });
 
       connector = new SlackConnector({ fetch: fetchFn });
-      const events = await connector.fetchEvents(makeConfig());
+      const events = await getAllEvents(connector, makeConfig());
 
       expect(events[0].participants).toEqual(
         expect.arrayContaining([
@@ -439,7 +439,7 @@ describe("SlackConnector", () => {
           SLACK_CHANNEL_IDS: "C123, C456",
         },
       });
-      const events = await connector.fetchEvents(config);
+      const events = await getAllEvents(connector, config);
 
       expect(events).toHaveLength(2);
       expect(events[0].id).toContain("C123");
@@ -458,7 +458,7 @@ describe("SlackConnector", () => {
       };
       connector = new SlackConnector(fetcher);
 
-      await expect(connector.fetchEvents(makeConfig())).rejects.toThrow(
+      await expect(getAllEvents(connector, makeConfig())).rejects.toThrow(
         "Slack API HTTP error: 401",
       );
     });
@@ -469,7 +469,7 @@ describe("SlackConnector", () => {
       });
       connector = new SlackConnector(fetcher);
 
-      await expect(connector.fetchEvents(makeConfig())).rejects.toThrow(
+      await expect(getAllEvents(connector, makeConfig())).rejects.toThrow(
         "Slack API error: invalid_auth",
       );
     });

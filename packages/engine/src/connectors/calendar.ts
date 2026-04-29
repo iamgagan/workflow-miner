@@ -184,7 +184,9 @@ export class CalendarConnector implements ConnectorInterface {
     this.deps = deps ?? { fetch: globalThis.fetch.bind(globalThis) };
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const clientId = config.credentials["CALENDAR_CLIENT_ID"];
     const clientSecret = config.credentials["CALENDAR_CLIENT_SECRET"];
     const refreshToken = config.credentials["CALENDAR_REFRESH_TOKEN"];
@@ -205,7 +207,7 @@ export class CalendarConnector implements ConnectorInterface {
       this.deps.fetch,
     );
 
-    return events.map((event) => toRawEvent(event, now));
+    yield events.map((event) => toRawEvent(event, now));
   }
 }
 
@@ -216,12 +218,16 @@ export async function fetchCalendarEvents(
   daysBack: number = 30,
 ): Promise<readonly RawEvent[]> {
   const connector = new CalendarConnector(deps);
-  return connector.fetchEvents({
+  const out: RawEvent[] = [];
+  for await (const page of connector.fetchEvents({
     credentials: {
       CALENDAR_CLIENT_ID: calendarConfig.clientId,
       CALENDAR_CLIENT_SECRET: calendarConfig.clientSecret,
       CALENDAR_REFRESH_TOKEN: calendarConfig.refreshToken,
     },
     lookbackDays: daysBack,
-  });
+  })) {
+    out.push(...page);
+  }
+  return out;
 }

@@ -60,7 +60,9 @@ export class GitHubConnector implements ConnectorInterface {
     this.fetchFn = fetchFn ?? (globalThis.fetch as unknown as FetchFn);
   }
 
-  async fetchEvents(config: ConnectorConfig): Promise<readonly RawEvent[]> {
+  async *fetchEvents(
+    config: ConnectorConfig,
+  ): AsyncIterable<readonly RawEvent[]> {
     const token = config.credentials["GITHUB_TOKEN"];
     if (!token) throw new Error("Missing GITHUB_TOKEN in credentials");
 
@@ -77,9 +79,8 @@ export class GitHubConnector implements ConnectorInterface {
     since.setDate(since.getDate() - config.lookbackDays);
     const sinceISO = since.toISOString();
 
-    const events: RawEvent[] = [];
-
     for (const repo of repos) {
+      const events: RawEvent[] = [];
       const [issues, commits] = await Promise.all([
         this.fetchIssuesAndPRs(token, repo, sinceISO),
         this.fetchCommits(token, repo, sinceISO),
@@ -160,9 +161,11 @@ export class GitHubConnector implements ConnectorInterface {
           },
         });
       }
-    }
 
-    return events;
+      if (events.length > 0) {
+        yield events;
+      }
+    }
   }
 
   private async fetchIssuesAndPRs(token: string, repo: string, since: string): Promise<GitHubIssue[]> {

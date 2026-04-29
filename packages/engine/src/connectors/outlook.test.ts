@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { OutlookConnector } from "./outlook.js";
-import type { ConnectorConfig } from "./types.js";
+import { getAllEvents, type ConnectorConfig } from "./types.js";
 
 function mockMessage(overrides: Record<string, unknown> = {}) {
   return {
@@ -65,7 +65,7 @@ describe("OutlookConnector", () => {
   it("throws when required OAuth credentials are missing", async () => {
     const connector = new OutlookConnector();
     await expect(
-      connector.fetchEvents({ credentials: { OUTLOOK_CLIENT_ID: "a" }, lookbackDays: 7 }),
+      getAllEvents(connector, { credentials: { OUTLOOK_CLIENT_ID: "a" }, lookbackDays: 7 }),
     ).rejects.toThrow(/Missing OUTLOOK_/);
   });
 
@@ -73,7 +73,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([mockMessage()]);
     const connector = new OutlookConnector(fetchFn);
 
-    await connector.fetchEvents(baseConfig);
+    await getAllEvents(connector, baseConfig);
 
     expect(fetchFn).toHaveBeenCalledTimes(2);
 
@@ -94,7 +94,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([]);
     const connector = new OutlookConnector(fetchFn);
 
-    await connector.fetchEvents({
+    await getAllEvents(connector, {
       credentials: { ...baseConfig.credentials, OUTLOOK_TENANT_ID: "tenant-xyz" },
       lookbackDays: 7,
     });
@@ -111,7 +111,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([msg]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].type).toBe("message_sent");
   });
 
@@ -119,7 +119,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([mockMessage()]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].type).toBe("message_received");
   });
 
@@ -130,7 +130,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([msg]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].type).toBe("decision_made");
   });
 
@@ -141,7 +141,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([msg]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].type).toBe("followup_assigned");
   });
 
@@ -149,7 +149,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([mockMessage({ isDraft: true })]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events).toHaveLength(0);
   });
 
@@ -164,7 +164,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([msg]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].participants.map((p) => p.id).sort()).toEqual([
       "alice@example.com",
       "bob@example.com",
@@ -180,7 +180,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([msg]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect(events[0].data).toEqual(
       expect.objectContaining({
         conversationId: "thread-123",
@@ -196,7 +196,7 @@ describe("OutlookConnector", () => {
       json: async () => ({ error: "invalid_grant" }),
     });
     const connector = new OutlookConnector(fetchFn);
-    await expect(connector.fetchEvents(baseConfig)).rejects.toThrow(
+    await expect(getAllEvents(connector, baseConfig)).rejects.toThrow(
       "Outlook token refresh failed: HTTP 401",
     );
   });
@@ -209,7 +209,7 @@ describe("OutlookConnector", () => {
       return Promise.resolve({ ok: false, status: 403, json: async () => ({}) });
     });
     const connector = new OutlookConnector(fetchFn);
-    await expect(connector.fetchEvents(baseConfig)).rejects.toThrow(
+    await expect(getAllEvents(connector, baseConfig)).rejects.toThrow(
       "Microsoft Graph API error: HTTP 403",
     );
   });
@@ -220,7 +220,7 @@ describe("OutlookConnector", () => {
     const fetchFn = makeFetchFn([msg]);
     const connector = new OutlookConnector(fetchFn);
 
-    const events = await connector.fetchEvents(baseConfig);
+    const events = await getAllEvents(connector, baseConfig);
     expect((events[0].data.bodyPreview as string).length).toBe(500);
   });
 });
