@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateApiKey, parseBearerToken } from "@/lib/mcp-auth";
+import { withCors, corsPreflight } from "@/lib/cors";
+
+export const OPTIONS = corsPreflight;
 
 let _supa: ReturnType<typeof createClient> | null = null;
 function supa() {
@@ -20,7 +23,7 @@ interface Params {
 // GET /api/mcp/page/:slug — fetch a single brain page + its outgoing links.
 export async function GET(request: NextRequest, { params }: Params) {
   const auth = await authenticateApiKey(parseBearerToken(request.headers.get("authorization")));
-  if (!auth) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!auth) return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }));
 
   const { slug } = await params;
 
@@ -37,14 +40,16 @@ export async function GET(request: NextRequest, { params }: Params) {
   ]);
 
   if (pageRes.error) {
-    return NextResponse.json({ error: pageRes.error.message }, { status: 500 });
+    return withCors(NextResponse.json({ error: pageRes.error.message }, { status: 500 }));
   }
   if (!pageRes.data) {
-    return NextResponse.json({ error: "not_found" }, { status: 404 });
+    return withCors(NextResponse.json({ error: "not_found" }, { status: 404 }));
   }
 
-  return NextResponse.json({
-    page: pageRes.data,
-    links: linksRes.data ?? [],
-  });
+  return withCors(
+    NextResponse.json({
+      page: pageRes.data,
+      links: linksRes.data ?? [],
+    })
+  );
 }

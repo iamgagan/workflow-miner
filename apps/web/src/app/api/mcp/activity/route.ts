@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateApiKey, parseBearerToken } from "@/lib/mcp-auth";
+import { withCors, corsPreflight } from "@/lib/cors";
+
+export const OPTIONS = corsPreflight;
 
 let _supa: ReturnType<typeof createClient> | null = null;
 function supa() {
@@ -16,7 +19,7 @@ function supa() {
 // GET /api/mcp/activity?source=slack&limit=50
 export async function GET(request: NextRequest) {
   const auth = await authenticateApiKey(parseBearerToken(request.headers.get("authorization")));
-  if (!auth) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!auth) return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }));
 
   const { searchParams } = new URL(request.url);
   const source = searchParams.get("source");
@@ -31,7 +34,7 @@ export async function GET(request: NextRequest) {
   if (source) query = query.eq("source", source);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return withCors(NextResponse.json({ error: error.message }, { status: 500 }));
 
-  return NextResponse.json({ entries: data ?? [] });
+  return withCors(NextResponse.json({ entries: data ?? [] }));
 }

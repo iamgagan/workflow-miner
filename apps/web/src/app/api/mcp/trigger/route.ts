@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { authenticateApiKey, parseBearerToken } from "@/lib/mcp-auth";
+import { withCors, corsPreflight } from "@/lib/cors";
 import { inngest } from "@/inngest/client";
+
+export const OPTIONS = corsPreflight;
 
 let _supa: ReturnType<typeof createClient> | null = null;
 function supa() {
@@ -24,17 +27,17 @@ interface TriggerBody {
 // Inngest event.
 export async function POST(request: NextRequest) {
   const auth = await authenticateApiKey(parseBearerToken(request.headers.get("authorization")));
-  if (!auth) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!auth) return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }));
 
   let body: TriggerBody;
   try {
     body = (await request.json()) as TriggerBody;
   } catch {
-    return NextResponse.json({ error: "invalid_json" }, { status: 400 });
+    return withCors(NextResponse.json({ error: "invalid_json" }, { status: 400 }));
   }
 
   if (!body.workflowId) {
-    return NextResponse.json({ error: "missing_workflow_id" }, { status: 400 });
+    return withCors(NextResponse.json({ error: "missing_workflow_id" }, { status: 400 }));
   }
 
   const idAsNumber = Number(body.workflowId);
@@ -50,7 +53,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (error || !pattern) {
-    return NextResponse.json({ error: "pattern_not_found" }, { status: 404 });
+    return withCors(NextResponse.json({ error: "pattern_not_found" }, { status: 404 }));
   }
 
   const p = pattern as { id: number; slug: string; title: string };
@@ -65,9 +68,11 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    ok: true,
-    eventId: ids[0],
-    patternTitle: p.title,
-  });
+  return withCors(
+    NextResponse.json({
+      ok: true,
+      eventId: ids[0],
+      patternTitle: p.title,
+    })
+  );
 }
