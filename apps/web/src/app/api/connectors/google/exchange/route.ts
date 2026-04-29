@@ -91,7 +91,6 @@ export async function POST(request: NextRequest) {
     .upsert(
       {
         user_id: user.id,
-        organization_id: user.app_metadata.organization_id || user.id,
         provider: "google",
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token ?? null,

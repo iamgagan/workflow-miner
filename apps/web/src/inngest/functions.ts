@@ -40,15 +40,12 @@ async function generateEmbedding(text: string) {
 }
 
 class CloudBrainClient {
-  constructor(private organizationId: string) {}
-
   async putPage(page: any) {
     const embedding = await generateEmbedding(`${page.title} ${page.compiled_truth || ""}`);
     const { data, error } = await supa()
       .from("brain_pages")
       .upsert(
         {
-          organization_id: this.organizationId,
           slug: page.slug,
           type: page.type ?? "concept",
           title: page.title,
@@ -59,7 +56,7 @@ class CloudBrainClient {
           embedding,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "organization_id,slug" }
+        { onConflict: "slug" }
       )
       .select();
     if (error) throw new Error(`putPage failed: ${error.message}`);
@@ -71,7 +68,6 @@ class CloudBrainClient {
     const { data, error } = await supa()
       .from("brain_timeline")
       .insert({
-        organization_id: this.organizationId,
         page_id: entry.page_id,
         date: entry.date,
         source: entry.source,
@@ -89,13 +85,12 @@ class CloudBrainClient {
       .from("brain_links")
       .upsert(
         {
-          organization_id: this.organizationId,
           from_slug: link.from_slug,
           to_slug: link.to_slug,
           link_type: link.link_type ?? "related",
           context: link.context ?? "",
         },
-        { onConflict: "organization_id,from_slug,to_slug,link_type" }
+        { onConflict: "from_slug,to_slug,link_type" }
       )
       .select();
     if (error) throw new Error(`addLink failed: ${error.message}`);
@@ -103,13 +98,13 @@ class CloudBrainClient {
   }
 }
 
-export const syncOrganizationData = inngest.createFunction(
+export const syncCompanyData = inngest.createFunction(
   {
-    id: "sync-organization-data",
-    triggers: [{ event: "org/sync.requested" }],
+    id: "sync-company-data",
+    triggers: [{ event: "company/sync.requested" }],
   },
   async ({ event, step }) => {
-    const { userId, organizationId, source, lookbackDays = 14 } = event.data;
+    const { userId, source, lookbackDays = 14 } = event.data;
 
     await step.run(`sync-${source}`, async () => {
       const engine = await import("@workflow-miner/engine");
@@ -199,7 +194,7 @@ export const syncOrganizationData = inngest.createFunction(
       const normalizer = new engine.Normalizer();
       const { events: normalizedEvents } = normalizer.normalize(rawEvents);
 
-      const brainClient: EngineBrainClient = new CloudBrainClient(organizationId) as unknown as EngineBrainClient;
+      const brainClient: EngineBrainClient = new CloudBrainClient() as unknown as EngineBrainClient;
       const ingestWriter = new engine.IngestWriter(brainClient);
       const writeResult = await ingestWriter.writeEvents(normalizedEvents);
 
@@ -214,13 +209,9 @@ export const syncOrganizationData = inngest.createFunction(
   }
 );
 
-// Triggered by the brain agent's `triggerWorkflow` tool. Compiles a detected
-// pattern into a runnable skill pack and (eventually) hands it off to the
-// configured executor (Claude skill, n8n webhook, Zapier, raw JSON dispatch).
-//
-// MVP behavior: load the pattern, log the dispatch, write a timeline entry so
-// the execution shows up in /api/activity. A future iteration plugs each
-// runtime adapter into the switch below.
+// Triggered by the brain agent's `triggerWorkflow` tool. Loads the pattern,
+// logs the dispatch, writes a timeline entry. The real per-runtime adapter
+// (n8n / Zapier webhook, Claude skill pack invocation) is a TODO.
 export const executePattern = inngest.createFunction(
   {
     id: "execute-pattern",
@@ -228,13 +219,12 @@ export const executePattern = inngest.createFunction(
     triggers: [{ event: "pattern/execute.requested" }],
   },
   async ({ event, step, logger }) => {
-    const { organizationId, userId, patternId, patternSlug, parameters } = event.data;
+    const { userId, patternId, patternSlug, parameters } = event.data;
 
     const pattern = await step.run("load-pattern", async () => {
       const { data, error } = await supa()
         .from("brain_pages")
         .select("id, slug, title, frontmatter, compiled_truth")
-        .eq("organization_id", organizationId)
         .eq("id", patternId)
         .single();
       if (error) throw new Error(`pattern not found: ${error.message}`);
@@ -246,7 +236,6 @@ export const executePattern = inngest.createFunction(
     await step.run("log-dispatch", async () => {
       logger.info({
         msg: "pattern dispatched",
-        organizationId,
         userId,
         patternSlug,
         runtime,
@@ -256,7 +245,6 @@ export const executePattern = inngest.createFunction(
 
     await step.run("write-timeline-entry", async () => {
       const { error } = await supa().from("brain_timeline").insert({
-        organization_id: organizationId,
         page_id: pattern.id,
         date: new Date().toISOString(),
         source: "pattern-executor",

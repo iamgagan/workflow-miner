@@ -6,7 +6,7 @@
 ┌─────────────────┐    ┌────────────────┐    ┌─────────────────┐
 │  Connectors     │───▶│  Inngest sync  │───▶│  Supabase brain │
 │  (Gmail/Slack/  │    │  + embed step  │    │  (pgvector,     │
-│   Linear/...)   │    │  (text-embed-3)│    │   RLS by org)   │
+│   Linear/...)   │    │  (text-embed-3)│    │   per-company)  │
 └─────────────────┘    └────────────────┘    └────────┬────────┘
                                                       │
                                             ┌─────────▼─────────┐
@@ -16,6 +16,8 @@
                                             └───────────────────┘
 ```
 
+> **Deployment model: one Supabase project per company.** This repo is designed to be self-hosted by the company that wants the brain. Multi-tenancy is achieved by isolation of deployments — your data sits in the Supabase project you control, never on someone else's servers. There is no shared SaaS to trust.
+
 > **About the desktop app.** A local-first macOS app shipped as v0.1.0-alpha.1 on 2026-04-28 (Tauri shell + PGlite). It is now **frozen** while the cloud Company Brain is the active product line — see [`apps/desktop/README.md`](apps/desktop/README.md) for the snapshot and how to revive the local-first build.
 
 ## Architecture
@@ -23,24 +25,22 @@
 ```
 workflow-miner/
 ├── apps/
-│   ├── web/                  # Next.js 15 dashboard + APIs (the cloud product)
+│   ├── web/                  # Next.js 15 dashboard + APIs
 │   │   └── src/
 │   │       ├── app/
 │   │       │   ├── (dashboard)/  # connectors, patterns, skills, settings
 │   │       │   ├── brain/        # the chat UI for the Company Brain agent
 │   │       │   ├── login/        # magic link + Google OAuth signin
-│   │       │   ├── invite/accept # team-invite redemption
 │   │       │   ├── auth/callback # OAuth + magic link landing
 │   │       │   └── api/
 │   │       │       ├── brain/agent       # streaming agent (Vercel AI SDK)
 │   │       │       ├── inngest           # Inngest webhook
-│   │       │       ├── orgs/{invite,accept}
 │   │       │       ├── sync              # dispatches sync jobs to Inngest
 │   │       │       └── connectors/...
 │   │       ├── inngest/          # Inngest client + functions
-│   │       │                     #  - syncOrganizationData (per-source sync)
+│   │       │                     #  - syncCompanyData (per-source sync)
 │   │       │                     #  - executePattern (workflow trigger)
-│   │       └── lib/supabase/     # cloud Supabase factories (browser/server/admin)
+│   │       └── lib/supabase/     # Supabase factories (browser/server/admin)
 │   └── desktop/              # FROZEN: macOS Tauri shell from v0.1.0-alpha.1
 └── packages/
     └── engine/               # @workflow-miner/engine
@@ -48,7 +48,7 @@ workflow-miner/
             ├── connectors/   # Gmail, Slack, Linear, Calendar, GitHub, Notion, Jira, Outlook
             ├── mining/       # PrefixSpan pattern detection
             ├── normalize/    # Raw events → standard schema
-            ├── brain/        # schema.sql (RLS, pgvector, RPCs, org trigger)
+            ├── brain/        # schema.sql (RLS, pgvector, RPCs)
             ├── pipeline/     # Ingestion orchestration
             ├── compiler/     # Pattern → Claude skill pack
             └── cli/          # CLI commands
@@ -73,7 +73,7 @@ workflow-miner/
 ### 1. Prerequisites
 
 - Node.js >= 20, pnpm >= 8
-- A [Supabase](https://app.supabase.com) project (free tier works)
+- A [Supabase](https://app.supabase.com) project (free tier works) — **one per company**
 - An [OpenAI](https://platform.openai.com) API key with access to `text-embedding-3-small` and `gpt-4o`
 - (Optional, for production) An [Inngest](https://app.inngest.com) account for background jobs
 
@@ -83,8 +83,8 @@ workflow-miner/
 git clone https://github.com/iamgagan/workflow-miner
 cd workflow-miner
 pnpm install
-cp .env.example .env.local
-$EDITOR .env.local
+cp .env.example apps/web/.env.local
+$EDITOR apps/web/.env.local
 ```
 
 Required env vars (also documented in `.env.example`):
@@ -105,7 +105,7 @@ INNGEST_SIGNING_KEY=
 
 ### 3. Apply the schema
 
-In your Supabase project's SQL editor, run [`packages/engine/src/brain/schema.sql`](packages/engine/src/brain/schema.sql). This creates the brain tables (`brain_pages`, `brain_timeline`, `brain_links`, `brain_tags`), the multi-tenant indexes, the HNSW indexes for vector search, the `match_timeline_entries` and `match_brain_pages` RPCs, the `provision_user_organization` trigger that auto-assigns each new user a personal org, and the `org_members` / `org_invites` tables for team workspaces.
+In your Supabase project's SQL editor, run [`packages/engine/src/brain/schema.sql`](packages/engine/src/brain/schema.sql). This creates the brain tables (`brain_pages`, `brain_timeline`, `brain_links`, `brain_tags`), the HNSW indexes for vector search, the `match_timeline_entries` and `match_brain_pages` RPCs, and RLS policies that grant any authenticated user of this Supabase project full access to the brain.
 
 ### 4. Configure Supabase Auth
 
@@ -113,6 +113,7 @@ In your Supabase dashboard:
 1. **Authentication → Providers → Email** — enable, allow magic links.
 2. **Authentication → Providers → Google** — enable, paste your Google OAuth client ID + secret.
 3. **Authentication → URL Configuration** — set **Site URL** to your deployment URL and add `<site>/auth/callback` as a **Redirect URL**.
+4. **Authentication → Settings → Allowed Email Domains** — set this to your company domain (e.g. `acme.com`) so only your employees can sign in. This is the gate that keeps your company brain to your company.
 
 ### 5. Run
 
@@ -130,17 +131,17 @@ Open <http://localhost:3000>, sign in via magic link, and visit `/brain` to chat
 
 | Mode | DB | Auth | Distribution | Status |
 |------|----|------|--------------|--------|
-| **Company Brain (cloud)** | Supabase Postgres + pgvector + RLS | Supabase Auth (magic link / Google) | Web app, multi-tenant | **Active** |
+| **Company Brain (self-hosted)** | Supabase Postgres + pgvector + RLS — your project | Supabase Auth (magic link / Google), domain-gated | Each company deploys their own instance | **Active** |
 | Local-first Mac app | PGlite (file in `~/Library/Application Support/WorkflowMiner/brain`) | macOS Keychain (single user) | Signed `.app`, Tauri shell | Frozen at v0.1.0-alpha.1 |
 
-The cloud product is multi-tenant by `organization_id`. Every table is RLS-scoped, every embedding is HNSW-indexed, and every multi-user workspace is invite-based via `/api/orgs/invite` + `/api/orgs/accept`.
+The cloud product is **single-tenant per deployment** — one Supabase project = one company. Multi-tenancy is achieved by isolation of deployments, not by row-level tenant filtering. Every employee of the company shares the same brain. To onboard a teammate, add their email domain to your Supabase project's allowed list and have them visit `/login`.
 
 ## Pipeline
 
 ```
-1. SYNC      User triggers `/api/sync?source=...`. The route dispatches an
-             `org/sync.requested` event per source to Inngest.
-2. INGEST    Inngest's `syncOrganizationData` function pulls the connector,
+1. SYNC      User triggers `/api/sync?source=...`. The route dispatches a
+             `company/sync.requested` event per source to Inngest.
+2. INGEST    Inngest's `syncCompanyData` function pulls the connector,
              normalizes events, and writes to `brain_pages` / `brain_timeline`
              via CloudBrainClient — embedding each page and timeline entry on
              write with `text-embedding-3-small`.
@@ -154,37 +155,24 @@ The cloud product is multi-tenant by `organization_id`. Every table is RLS-scope
              via the `/skills` route (the desktop alpha's compiler is reused).
 ```
 
-## Inviting teammates
+## Onboarding teammates
 
-```bash
-# Sign in as the org owner, then:
-curl -X POST $SITE/api/orgs/invite \
-  -H "Cookie: $YOUR_SUPABASE_SESSION_COOKIE" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "teammate@yourcompany.com"}'
-# → { inviteUrl: "https://.../invite/accept?token=..." }
-```
+Just have them visit `/login` and sign in with their company-domain email. Supabase's allowed-email-domains setting is the gate.
 
-Send the URL to your teammate. After they sign in and accept, their JWT carries the org's `organization_id` and RLS lets them see the same brain.
+There is no invite/accept flow because there's nothing to invite *to* — every authenticated user of this Supabase project sees the same brain by design. If you want to restrict access more finely (e.g. only certain employees), use Supabase's row-level security policies.
 
-## API reference (cloud product)
+## API reference
 
 ### Brain agent
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/brain/agent` | Streaming chat with `gpt-4o`, tools: `searchCompanyKnowledge`, `getOrganizationPatterns`, `triggerWorkflow` |
 
-### Org management
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/orgs/invite` | Issue an invite token for a teammate |
-| `POST` | `/api/orgs/accept` | Redeem an invite token; calls `accept_org_invite()` |
-
 ### Background jobs
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `*`    | `/api/inngest` | Inngest webhook (handles `org/sync.requested`, `pattern/execute.requested`) |
-| `POST` | `/api/sync?source=all` | Dispatches sync jobs for the caller's org |
+| `*`    | `/api/inngest` | Inngest webhook (handles `company/sync.requested`, `pattern/execute.requested`) |
+| `POST` | `/api/sync?source=all` | Dispatches sync jobs |
 
 ### Connectors
 | Method | Endpoint | Description |
@@ -220,7 +208,7 @@ cd apps/web && npx playwright test
 
 ## Deployment
 
-The cloud product deploys cleanly to **Vercel**. Set every env var from `.env.example` in the Vercel project, point your Supabase project's redirect URL at `<site>/auth/callback`, and run the `inngest-cli` either as a Vercel cron, on Inngest's hosted runner, or alongside your own infra. See [`docs/DEPLOY.md`](docs/DEPLOY.md) if it exists, or the existing `vercel.json` in the repo root.
+The cloud product deploys cleanly to **Vercel**. Each company creates their own Vercel project, sets every env var from `.env.example`, and points their Supabase project's redirect URL at `<site>/auth/callback`. Run the `inngest-cli` either as a Vercel cron, on Inngest's hosted runner, or alongside your own infra. See [`docs/DEPLOY.md`](docs/DEPLOY.md) if it exists, or the existing `vercel.json` in the repo root.
 
 ## License
 

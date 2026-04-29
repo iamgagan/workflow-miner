@@ -43,10 +43,9 @@ export async function POST(request: NextRequest) {
 
   // 3. Trigger Inngest jobs for each source
   const events = sourcesToSync.map(source => ({
-    name: "org/sync.requested" as const,
+    name: "company/sync.requested" as const,
     data: {
       userId: user.id,
-      organizationId: user.app_metadata.organization_id || user.id,
       source,
       lookbackDays,
     }

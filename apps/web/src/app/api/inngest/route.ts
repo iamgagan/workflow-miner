@@ -1,11 +1,11 @@
 import { serve } from "inngest/next";
 import { inngest } from "../../../inngest/client";
-import { syncOrganizationData, executePattern } from "../../../inngest/functions";
+import { syncCompanyData, executePattern } from "../../../inngest/functions";
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    syncOrganizationData,
+    syncCompanyData,
     executePattern,
   ],
 });

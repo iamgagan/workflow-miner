@@ -13,13 +13,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const organizationId =
-    (user.app_metadata as Record<string, unknown>)?.organization_id as string | undefined ?? user.id;
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
   const result = streamText({
     model: openai("gpt-4o"),
-    system: "You are the Company Brain Agent. You have access to the company's entire knowledge graph, including Slack messages, Emails, Linear tickets, and Google Calendar events. Your job is to answer questions using ONLY the facts retrieved from the search tool. If you are asked to draft something, use the context. If you don't know the answer after searching, say you don't know.",
+    system:
+      "You are the Company Brain Agent. You have access to the company's entire knowledge graph, including Slack messages, Emails, Linear tickets, and Google Calendar events. Your job is to answer questions using ONLY the facts retrieved from the search tool. If you are asked to draft something, use the context. If you don't know the answer after searching, say you don't know.",
     messages: await convertToModelMessages(messages),
     tools: {
       searchCompanyKnowledge: tool({
@@ -28,7 +27,6 @@ export async function POST(req: Request) {
           query: z.string().describe("The search query to embed and look up in the vector database."),
         }),
         execute: async ({ query }) => {
-          // Generate embedding for the query
           const { OpenAI } = await import("openai");
           const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
           const response = await oai.embeddings.create({
@@ -38,13 +36,10 @@ export async function POST(req: Request) {
           });
           const embedding = response.data[0].embedding;
 
-          // Call Postgres RPC for vector similarity search
-          // Assumes `match_timeline_entries` RPC function exists in Supabase
           const { data, error } = await supabase.rpc("match_timeline_entries", {
             query_embedding: embedding,
             match_threshold: 0.7,
             match_count: 10,
-            org_id: organizationId,
           });
 
           if (error) {
@@ -62,26 +57,23 @@ export async function POST(req: Request) {
           parameters: z.record(z.string(), z.string()).describe("Required parameters to start the workflow"),
         }),
         execute: async ({ workflowId, parameters }) => {
-          // Verify the pattern belongs to this org before dispatching.
           const { data: pattern, error: patternError } = await supabase
             .from("brain_pages")
             .select("id, slug, title, type")
-            .eq("organization_id", organizationId)
             .or(`slug.eq.${workflowId},id.eq.${Number.isNaN(Number(workflowId)) ? -1 : Number(workflowId)}`)
             .eq("type", "pattern")
             .maybeSingle();
 
           if (patternError || !pattern) {
-            return { success: false, error: "Workflow pattern not found in this organization." };
+            return { success: false, error: "Workflow pattern not found." };
           }
 
           // Hand the actual execution off to Inngest. The pattern/execute
-          // handler is responsible for compiling the pattern → skill pack
-          // and running it; this endpoint only dispatches.
+          // handler compiles the pattern → skill pack and runs it; this
+          // endpoint only dispatches.
           const { ids } = await inngest.send({
             name: "pattern/execute.requested",
             data: {
-              organizationId,
               userId: user.id,
               patternId: pattern.id,
               patternSlug: pattern.slug,
@@ -98,7 +90,7 @@ export async function POST(req: Request) {
         },
       }),
       getOrganizationPatterns: tool({
-        description: "List the frequent workflow patterns detected across the organization.",
+        description: "List the frequent workflow patterns detected across the company.",
         inputSchema: z.object({
           limit: z.number().optional().describe("Max patterns to return (default 20)"),
         }),
@@ -106,7 +98,6 @@ export async function POST(req: Request) {
           const { data, error } = await supabase
             .from("brain_pages")
             .select("id, slug, title, compiled_truth, frontmatter, updated_at")
-            .eq("organization_id", organizationId)
             .eq("type", "pattern")
             .order("updated_at", { ascending: false })
             .limit(limit ?? 20);
@@ -125,9 +116,9 @@ export async function POST(req: Request) {
             })),
           };
         },
-      })
+      }),
     },
-    stopWhen: stepCountIs(5), // Allow the agent to call tools and loop back
+    stopWhen: stepCountIs(5),
   });
 
   return result.toUIMessageStreamResponse();
