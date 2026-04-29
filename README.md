@@ -29,10 +29,13 @@
 - **Personal tier:** founders, solo operators, individual contributors who want their own knowledge graph from their work tools without trusting a third party.
 - **Team tier:** 20–200-person companies (typically Series A/B, AI-native or AI-curious) where information is fragmented across Slack, email, and ticket tools; new hires take weeks to find context; and your CISO won't let you ship customer emails to a SaaS vendor.
 
-## Why is this different from Amazon Quick / gbrain / other "company brains"?
+## Why is this different from Amazon Quick / gbrain / Tolaria / other "company brains"?
 
 - **vs. Amazon Quick:** Quick sends your data to AWS. Workflow Miner Personal keeps it on your Mac; Workflow Miner Team keeps it in your own Supabase. Same intelligence, none of the trust ask.
 - **vs. [Garry Tan's gbrain](https://github.com/garrytan/gbrain):** same data model (`brain_pages` with compiled_truth + timeline + frontmatter + cross-links + pgvector — you can swap to gbrain CLI on the same vault). We add: automatic ingest from team SaaS, multi-user team mode, an MCP server for editor integration, and a packaged Mac app for individuals.
+- **vs. [Tolaria](https://github.com/refactoringhq/tolaria):** Tolaria is the manual notes-app version (you type notes, it organizes them). Workflow Miner is the automatic ingest version (we pull from your work tools). Workflow Miner's Markdown export writes a gbrain-format vault Tolaria can open directly — they compose, they don't compete.
+
+> **Trust-segment alliance.** Workflow Miner, gbrain, and Tolaria are three points on the same line — desktop-first, file/local-DB-backed, MCP-exposed knowledge tools. Tolaria for the knowledge you choose to write down. gbrain for personal LLM memory. Workflow Miner for the knowledge already happening in your tools. Same vault format; pick the right tool per use case.
 
 ## Install — Personal tier (~5 min)
 
