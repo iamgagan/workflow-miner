@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Clock, Settings, Unplug, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Clock, Settings, Unplug, Trash2, Sparkles, Github, Key } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -20,6 +21,22 @@ export default function SettingsPage() {
   const [quietEnd, setQuietEnd] = useState("08:00");
   const [disconnecting, setDisconnecting] = useState(false);
   const [wiping, setWiping] = useState(false);
+  const [dreamStatus, setDreamStatus] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
+
+  async function runDreamCycle() {
+    setDreamStatus("Dispatching…");
+    const res = await fetch("/api/dream/run", { method: "POST" });
+    const data = await res.json();
+    setDreamStatus(res.ok ? `Dispatched (event ${data.eventId})` : `Error: ${data.error}`);
+  }
+
+  async function runExport() {
+    setExportStatus("Dispatching…");
+    const res = await fetch("/api/export/run", { method: "POST" });
+    const data = await res.json();
+    setExportStatus(res.ok ? `Dispatched (event ${data.eventId})` : `Error: ${data.error}`);
+  }
 
   const handleDisconnectAll = async () => {
     const ok = window.confirm(
@@ -125,6 +142,62 @@ export default function SettingsPage() {
           )}
         </CardContent>
       </Card>
+      <Card className="shadow-warm-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Key className="h-5 w-5 text-primary" />
+            API Keys
+          </CardTitle>
+          <CardDescription>
+            Generate keys for the MCP server (Claude Code, Cursor, etc).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Link href="/settings/api-keys" className="text-sm underline">
+            Manage API keys →
+          </Link>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-warm-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary" />
+            Dream Cycle
+          </CardTitle>
+          <CardDescription>
+            Manually trigger the LLM enrichment pass (entity extraction + compiled-truth refresh).
+            Normally runs automatically on a cron.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Button onClick={runDreamCycle}>Run Dream Cycle now</Button>
+          {dreamStatus ? (
+            <p className="text-xs font-mono text-muted-foreground">{dreamStatus}</p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-warm-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Github className="h-5 w-5 text-primary" />
+            Markdown export
+          </CardTitle>
+          <CardDescription>
+            Manually push a markdown mirror of the brain to your configured GitHub repo. Requires{" "}
+            <code className="text-xs">GITHUB_EXPORT_PAT</code> and{" "}
+            <code className="text-xs">GITHUB_EXPORT_REPO</code> env vars.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Button onClick={runExport}>Run export now</Button>
+          {exportStatus ? (
+            <p className="text-xs font-mono text-muted-foreground">{exportStatus}</p>
+          ) : null}
+        </CardContent>
+      </Card>
+
       {/* Danger Zone */}
       <Card className="border-red-300 shadow-warm-card dark:border-red-800">
         <CardHeader>
