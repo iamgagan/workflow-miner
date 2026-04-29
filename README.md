@@ -1,6 +1,43 @@
-# Workflow Miner — Company Brain
+# Workflow Miner
 
-**An observability + RAG layer for how your company actually works.** Workflow Miner connects to Gmail, Slack, Linear, Google Calendar, GitHub, Notion, Jira, and Outlook; embeds every event into a vector-searchable brain; mines the recurring patterns your team repeats; and exposes the result as **a chat agent** that can answer questions across the whole knowledge graph and trigger detected workflows on demand.
+> **The Company Brain that actually works on your company's data.** Plug in Gmail, Slack, Linear, Calendar, GitHub, Notion, Jira, Outlook → get a searchable, queryable, agent-callable brain that knows what your team is doing this week, what the patterns are, and how to trigger them.
+
+## What is this?
+
+Most teams have their knowledge scattered across 8 SaaS tools. Workflow Miner pulls events from all of them, embeds each one into a vector store, mines the recurring patterns your team actually repeats, and exposes the result three ways:
+
+- **Chat:** ask the `/brain` agent in natural language ("what did the engineering team decide about Postgres last week?") and get an answer with sources.
+- **Editor:** every Claude Code / Cursor user in your company can call the brain as MCP tools — `search_brain`, `get_page`, `list_patterns`, `trigger_workflow` — without leaving their editor.
+- **Automation:** detected workflow patterns (e.g. "support email → Linear ticket → draft reply") compile into Claude skill packs / n8n / Zapier so the brain doesn't just observe — it executes.
+
+## Who's it for?
+
+20–200-person companies (typically Series A/B, AI-native or AI-curious) where:
+- Information is fragmented across Slack, email, and ticket tools
+- New hires take weeks to find context
+- The same workflows repeat constantly but nobody's automated them
+- You don't want your data sitting on a third-party SaaS
+
+## Why is this different from gbrain / other "company brains"?
+
+- **Same data model as [Garry Tan's gbrain](https://github.com/garrytan/gbrain)** — `brain_pages` with compiled_truth + timeline + frontmatter + cross-links + pgvector. You can swap to gbrain CLI on the same vault. We add: automatic ingest from team SaaS, multi-user via Supabase Auth, and an MCP server for editor integration.
+- **You own everything.** One Supabase project per company — your account, your data, your billing. We never see it. Self-hosted on Vercel + Supabase = your infra, your control. No SaaS middleman.
+- **Already shipped infrastructure.** 18 implementation tasks, 21 unit tests, 46 routes, working agent loop — not a deck.
+
+## Install (~15 min)
+
+1. Create a [Supabase](https://app.supabase.com) project (free tier works).
+2. Run [`packages/engine/src/brain/schema.sql`](packages/engine/src/brain/schema.sql) in the SQL editor.
+3. In Supabase Auth → Providers, enable Email + Google. Set Allowed Email Domains to your company domain.
+4. Deploy to Vercel with the env vars in [`.env.example`](.env.example).
+5. Sign in at `<your-domain>/login`, hit `/brain`, ask a question.
+6. Optional: add `@workflow-miner/mcp` to your Claude Code config to query the brain from your editor.
+
+Detailed setup is below.
+
+---
+
+## For engineers — how it's wired
 
 ```
 ┌─────────────────┐    ┌────────────────┐    ┌─────────────────┐
@@ -16,7 +53,9 @@
                                             └───────────────────┘
 ```
 
-> **Deployment model: one Supabase project per company.** This repo is designed to be self-hosted by the company that wants the brain. Multi-tenancy is achieved by isolation of deployments — your data sits in the Supabase project you control, never on someone else's servers. There is no shared SaaS to trust.
+Plus: **Dream Cycles** (nightly LLM enrichment — extract entities, refresh summaries, re-embed), **MCP server** (`@workflow-miner/mcp` — stdio CLI for any MCP client), **Markdown export** (push gbrain-format `.md` files to a GitHub repo you own).
+
+> **Deployment model: one Supabase project per company.** Multi-tenancy is achieved by isolation of deployments — your data sits in the Supabase project you control, never on someone else's servers. There is no shared SaaS to trust.
 
 > **About the desktop app.** A local-first macOS app shipped as v0.1.0-alpha.1 on 2026-04-28 (Tauri shell + PGlite). It is now **frozen** while the cloud Company Brain is the active product line — see [`apps/desktop/README.md`](apps/desktop/README.md) for the snapshot and how to revive the local-first build.
 
