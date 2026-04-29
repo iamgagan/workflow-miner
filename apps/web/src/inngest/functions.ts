@@ -310,6 +310,70 @@ Write a concise 2-3 sentence summary capturing what is currently true about this
   }
 }
 
+interface ExtractedEntity {
+  type: "person" | "company" | "project";
+  name: string;
+  slug: string;
+}
+
+export async function extractEntities(text: string): Promise<ExtractedEntity[]> {
+  if (!text || text.length < 20) return [];
+
+  const prompt = `Extract real-world entities from the following text. Return a JSON array of objects with "type" (one of: person, company, project), "name" (the entity's display name), and "slug" (kebab-case lowercase, e.g. "garry-tan" or "acme-corp"). Return [] if nothing concrete. No preamble, no prose, JSON only.
+
+Text:
+${text.slice(0, 4000)}`;
+
+  try {
+    const response = await oai().chat.completions.create({
+      model: ENRICH_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 500,
+      temperature: 0,
+      response_format: { type: "json_object" },
+    });
+    const raw = response.choices[0]?.message?.content?.trim() ?? "[]";
+
+    // gpt-4o-mini in JSON mode returns { entities: [...] } or just the array
+    // depending on prompt. Handle both shapes.
+    const parsed = JSON.parse(raw);
+    const arr = Array.isArray(parsed) ? parsed : (parsed.entities ?? []);
+    return arr.filter(
+      (e: unknown): e is ExtractedEntity =>
+        typeof e === "object" && e !== null &&
+        "type" in e && "name" in e && "slug" in e &&
+        ["person", "company", "project"].includes((e as ExtractedEntity).type)
+    );
+  } catch (err) {
+    console.error("extractEntities failed:", err);
+    return [];
+  }
+}
+
+async function upsertEntityAndLink(entity: ExtractedEntity, fromSlug: string) {
+  // Upsert the entity page (no embedding yet — it'll get one in its own
+  // dream-cycle pass).
+  await supa()
+    .from("brain_pages")
+    .upsert(
+      { slug: entity.slug, type: entity.type, title: entity.name },
+      { onConflict: "slug", ignoreDuplicates: true }
+    );
+
+  // Link from the source page to this entity.
+  await supa()
+    .from("brain_links")
+    .upsert(
+      {
+        from_slug: fromSlug,
+        to_slug: entity.slug,
+        link_type: "mentions",
+        context: "auto-extracted by dream cycle",
+      },
+      { onConflict: "from_slug,to_slug,link_type", ignoreDuplicates: true }
+    );
+}
+
 // Nightly LLM-enrichment pass. Walks every page touched since its last
 // enrichment and refreshes its compiled_truth, extracts entities, re-embeds
 // if the truth changed. Bounded by DREAM_CYCLE_MAX_PAGES_PER_RUN per run.
@@ -339,6 +403,17 @@ export const dreamCycle = inngest.createFunction(
     for (const page of stalePages) {
       await step.run(`enrich-page-${page.id}`, async () => {
         const newCompiledTruth = await refreshCompiledTruth(page);
+
+        // Entity extraction runs against the current compiled_truth (the most
+        // dense, summarized form of the page). Skip for entity-type pages
+        // themselves to avoid recursion.
+        if (page.type !== "person" && page.type !== "company" && page.type !== "project") {
+          const entities = await extractEntities(newCompiledTruth ?? page.title);
+          for (const entity of entities) {
+            if (entity.slug === page.slug) continue; // Don't self-link.
+            await upsertEntityAndLink(entity, page.slug);
+          }
+        }
 
         const updates: Record<string, unknown> = {
           last_enriched_at: new Date().toISOString(),

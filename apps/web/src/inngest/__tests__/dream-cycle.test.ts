@@ -18,7 +18,7 @@ vi.mock("openai", () => ({
 
 describe("Dream Cycle compiled_truth refresh", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("keeps existing compiled_truth when no new timeline entries exist", async () => {
@@ -43,5 +43,53 @@ describe("Dream Cycle compiled_truth refresh", () => {
 
     expect(result).toBe("Existing summary.");
     expect(openaiMock.chat.completions.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("Dream Cycle entity extraction", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("parses a JSON-array response", async () => {
+    openaiMock.chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: '[{"type":"person","name":"Garry Tan","slug":"garry-tan"}]' } }],
+    });
+
+    const { extractEntities } = await import("../functions");
+    const result = await extractEntities("Garry Tan announced new YC batch.");
+
+    expect(result).toEqual([{ type: "person", name: "Garry Tan", slug: "garry-tan" }]);
+  });
+
+  it("parses a {entities: [...]} response", async () => {
+    openaiMock.chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: '{"entities":[{"type":"company","name":"Acme","slug":"acme"}]}' } }],
+    });
+
+    const { extractEntities } = await import("../functions");
+    const result = await extractEntities("Acme launched their product.");
+
+    expect(result).toEqual([{ type: "company", name: "Acme", slug: "acme" }]);
+  });
+
+  it("filters out malformed entries", async () => {
+    openaiMock.chat.completions.create.mockResolvedValue({
+      choices: [{ message: { content: '[{"type":"animal","name":"Fox","slug":"fox"},{"type":"person","name":"Eve","slug":"eve"}]' } }],
+    });
+
+    const { extractEntities } = await import("../functions");
+    const result = await extractEntities("Eve and a fox in the garden today.");
+
+    expect(result).toEqual([{ type: "person", name: "Eve", slug: "eve" }]);
+  });
+
+  it("returns empty array on LLM error", async () => {
+    openaiMock.chat.completions.create.mockRejectedValue(new Error("rate limit"));
+
+    const { extractEntities } = await import("../functions");
+    const result = await extractEntities("anything that is more than twenty chars");
+
+    expect(result).toEqual([]);
   });
 });
