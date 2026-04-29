@@ -1,0 +1,12 @@
+{
+  "exclude": [
+    "node_modules/",
+    ".next/",
+    "dist/",
+    "build/",
+    "out/",
+    "coverage/",
+    "apps/desktop/src-tauri/target/",
+    "apps/desktop/scripts/"
+  ]
+}

@@ -9,9 +9,13 @@
     "lint": "pnpm -r lint",
     "desktop:dev": "pnpm --filter @workflow-miner/engine build && pnpm --filter @workflow-miner/desktop tauri dev",
     "desktop:build": "WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/engine build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter web build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/desktop tauri build",
-    "desktop:build:universal": "WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/engine build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter web build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/desktop tauri build --target universal-apple-darwin"
+    "desktop:build:universal": "WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/engine build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter web build && WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter @workflow-miner/desktop tauri build --target universal-apple-darwin",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
   }
 }
