@@ -259,3 +259,49 @@ export const executePattern = inngest.createFunction(
     return { ok: true, patternId, patternSlug, runtime };
   }
 );
+
+// Nightly LLM-enrichment pass. Walks every page touched since its last
+// enrichment and refreshes its compiled_truth, extracts entities, re-embeds
+// if the truth changed. Bounded by DREAM_CYCLE_MAX_PAGES_PER_RUN per run.
+export const dreamCycle = inngest.createFunction(
+  {
+    id: "dream-cycle",
+    name: "Dream Cycle (LLM enrichment)",
+    triggers: [
+      { cron: process.env.DREAM_CYCLE_CRON ?? "0 3 * * *" },
+      { event: "dream/cycle.requested" },
+    ],
+  },
+  async ({ step }) => {
+    const max = parseInt(process.env.DREAM_CYCLE_MAX_PAGES_PER_RUN ?? "500", 10);
+
+    const stalePages = await step.run("find-stale-pages", async () => {
+      const { data, error } = await supa()
+        .from("brain_pages")
+        .select("id, slug, type, title, compiled_truth, timeline, updated_at, last_enriched_at")
+        .or("last_enriched_at.is.null,last_enriched_at.lt.updated_at")
+        .order("last_enriched_at", { ascending: true, nullsFirst: true })
+        .limit(max);
+      if (error) throw new Error(`find-stale-pages failed: ${error.message}`);
+      return data ?? [];
+    });
+
+    for (const page of stalePages) {
+      await step.run(`enrich-page-${page.id}`, async () => {
+        // Implemented in Task B2 (compiled-truth refresh) and B3 (entities).
+        const { error } = await supa()
+          .from("brain_pages")
+          .update({ last_enriched_at: new Date().toISOString() })
+          .eq("id", page.id);
+        if (error) throw new Error(`mark-enriched failed: ${error.message}`);
+      });
+    }
+
+    await step.sendEvent("notify-export", {
+      name: "dream/cycle.completed",
+      data: { pagesEnriched: stalePages.length },
+    });
+
+    return { pagesEnriched: stalePages.length };
+  }
+);
