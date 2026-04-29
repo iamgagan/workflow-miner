@@ -19,7 +19,12 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ComponentType } from "react";
-// desktop-bridge removed
+import {
+  isTauri,
+  connectGoogleViaLoopback,
+  oauthLoopbackCancel,
+  keychainSet,
+} from "@/lib/desktop-bridge";
 
 interface ConnectorData {
   name: string;
@@ -238,6 +243,9 @@ function ConnectorsContent() {
   const [manualTokenProvider, setManualTokenProvider] = useState<
     "slack" | "linear" | "github" | "notion" | "jira" | "outlook" | null
   >(null);
+  // Tracks the id of an in-flight Google OAuth loopback listener so we can
+  // cancel it when the user navigates away or hits Escape.
+  const [pendingOauthId, setPendingOauthId] = useState<number | null>(null);
   // Upvotes for coming-soon connectors (persisted in localStorage).
   const [upvotes, setUpvotes] = useState<Record<string, boolean>>({});
 
@@ -256,6 +264,31 @@ function ConnectorsContent() {
     });
   }, []);
 
+  // Cancel any in-flight OAuth listener when the page unmounts (e.g. user
+  // navigates to /dashboard mid-flow). The Tauri shell would otherwise hold
+  // the loopback port open until the 5-minute timeout.
+  useEffect(() => {
+    return () => {
+      if (pendingOauthId !== null) {
+        void oauthLoopbackCancel(pendingOauthId).catch(() => {});
+      }
+    };
+  }, [pendingOauthId]);
+
+  // Cancel an in-flight OAuth flow when the user presses Escape.
+  useEffect(() => {
+    if (pendingOauthId === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        void oauthLoopbackCancel(pendingOauthId).catch(() => {});
+        setPendingOauthId(null);
+        setNotification("Cancelled");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingOauthId]);
+
   const handleManualTokenSubmit = useCallback(
     async (
       provider: "slack" | "linear" | "github" | "notion" | "jira" | "outlook",
@@ -273,7 +306,15 @@ function ConnectorsContent() {
           setNotification(`Failed to save ${provider} token: ${detail}`);
           return;
         }
-        // Desktop keychain mirroring removed
+        // Mirror into the OS keychain too when running in the desktop
+        // shell. The keychain is the primary store; the connector_tokens
+        // row exists so the sync route can find the credentials shape.
+        if (isTauri()) {
+          const key = provider === "slack" ? "bot_token" : "api_key";
+          await keychainSet(provider, key, token).catch((err) => {
+            console.warn("keychain mirror failed (non-fatal)", err);
+          });
+        }
         setNotification(`Successfully connected ${provider}!`);
         setManualTokenProvider(null);
         const status = await fetch("/api/connectors/status").then((r) =>
@@ -353,7 +394,39 @@ function ConnectorsContent() {
 
   const handleOAuthConnect = useCallback(async (connector: ConnectorData) => {
     if (connector.oauthProvider === "google") {
-      setNotification("Cloud OAuth for Google is coming soon.");
+      // Desktop-only: Google OAuth requires the system browser + a 127.0.0.1
+      // loopback redirect (RFC 8252). Embedded webviews are blocked by Google.
+      if (!isTauri()) {
+        setNotification(
+          "Google sign-in only works inside the Workflow Miner desktop app.",
+        );
+        return;
+      }
+      const clientId = process.env.NEXT_PUBLIC_GMAIL_CLIENT_ID ?? "";
+      if (!clientId) {
+        setNotification(
+          "Google OAuth client ID is not configured. Set NEXT_PUBLIC_GMAIL_CLIENT_ID before launching the desktop app.",
+        );
+        return;
+      }
+      try {
+        setNotification("Waiting for Google authorization in your browser…");
+        await connectGoogleViaLoopback(clientId, {
+          onStart: (handle) => setPendingOauthId(handle.id),
+        });
+        setNotification("Successfully connected Google!");
+        const status = await fetch("/api/connectors/status").then((r) =>
+          r.json(),
+        );
+        setStatusMap(status.connectors ?? {});
+      } catch (err) {
+        console.error("desktop oauth flow failed", err);
+        setNotification(
+          err instanceof Error ? err.message : "Connection failed",
+        );
+      } finally {
+        setPendingOauthId(null);
+      }
       return;
     }
 

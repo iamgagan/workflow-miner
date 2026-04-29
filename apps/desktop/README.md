@@ -1,13 +1,15 @@
-# Workflow Miner — Desktop App (FROZEN)
+# Workflow Miner — Desktop App (Personal Tier)
 
-> **Status (2026-04-29): Frozen.** Active product development moved to the
-> multi-tenant cloud "Company Brain" — see the root [`README.md`](../../README.md).
-> The desktop shell remains in the repo for the v0.1.0-alpha.1 build that
-> shipped on 2026-04-28 and as a reference for future on-prem / single-user
-> deployments. The renderer-side `desktop-bridge.ts` (Keychain helpers, OAuth
-> loopback) and the PGlite shim were removed during the cloud pivot, so the
-> shell currently wraps a web app that requires Supabase auth. Restore those
-> shims (or check out commit `b1b757b`) to run the desktop app locally.
+> **Status (2026-04-29): Active — the Personal tier of the Workflow Miner product line.**
+>
+> The same codebase ships in two modes:
+> - **Personal (this app):** native macOS, PGlite on disk, your data never leaves your Mac
+> - **Team (cloud):** Vercel + Supabase deployment, shared brain across the company
+>
+> The renderer-side `desktop-bridge.ts` (Keychain + OAuth loopback) and the
+> PGlite shim are restored and wired through dual-mode Supabase factories
+> that branch on `WORKFLOW_MINER_MODE=desktop`. Tauri sets that env var
+> automatically when spawning the Next.js sidecar.
 
 The macOS desktop shell for Workflow Miner. Wraps the existing Next.js
 dashboard inside a Tauri (Rust) shell, runs the brain database locally via

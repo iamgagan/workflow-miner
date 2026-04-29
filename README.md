@@ -1,30 +1,50 @@
 # Workflow Miner
 
-> **The Company Brain that actually works on your company's data.** Plug in Gmail, Slack, Linear, Calendar, GitHub, Notion, Jira, Outlook → get a searchable, queryable, agent-callable brain that knows what your team is doing this week, what the patterns are, and how to trigger them.
+> **A brain that knows how your company actually works — without giving Amazon, Microsoft, or anyone else a copy.** Plug in Gmail, Slack, Linear, Calendar, GitHub, Notion, Jira, Outlook → get a searchable, queryable, agent-callable brain. Two tiers, same codebase, you pick the one that matches your trust threshold.
 
-## What is this?
+## Two tiers
 
-Most teams have their knowledge scattered across 8 SaaS tools. Workflow Miner pulls events from all of them, embeds each one into a vector store, mines the recurring patterns your team actually repeats, and exposes the result three ways:
+|  | **Personal** (Mac app) | **Team** (cloud, self-hosted) |
+|---|---|---|
+| **Who** | One person, your laptop | A whole company |
+| **Where data lives** | PGlite file in `~/Library/Application Support/WorkflowMiner/brain` on your Mac | Your own Supabase project, in your own cloud account |
+| **Network** | None for the brain itself; OpenAI calls only when you opt in | Standard cloud — Supabase + Vercel + OpenAI + Inngest, all in your accounts |
+| **Trust ask** | None. Verifiable with Activity Monitor / Wireshark | Trust your own AWS-hosted Supabase + Vercel |
+| **Auth** | macOS Keychain, single local user | Supabase Auth with magic link / Google, gated by allowed-email-domains |
+| **Multi-user** | No (one Mac = one brain) | Yes (every authenticated user in the Supabase project shares the brain) |
+| **Distribution** | Signed `.app` download | One Vercel + Supabase deploy per company |
+| **Status** | v0.1.0-alpha.1 shipped 2026-04-28 | Production-ready as of `main` |
+| **Cost** | Free (you pay OpenAI usage if you use the chat agent) | Supabase + Vercel + OpenAI + Inngest at your usage tiers |
 
-- **Chat:** ask the `/brain` agent in natural language ("what did the engineering team decide about Postgres last week?") and get an answer with sources.
-- **Editor:** every Claude Code / Cursor user in your company can call the brain as MCP tools — `search_brain`, `get_page`, `list_patterns`, `trigger_workflow` — without leaving their editor.
+> **Why both?** A brain that observes one person's workflow can absolutely live on that person's machine — that's the Personal tier, and it can honestly say "your data never leaves your Mac." A brain shared across a team needs a central store; the Team tier puts that store in *your company's* infrastructure, not ours. Either tier, no third party sees your data.
+
+## What it does (both tiers)
+
+- **Chat:** ask the `/brain` agent in natural language ("what did the team decide about Postgres last week?") and get an answer with sources.
+- **Editor (Team tier):** every Claude Code / Cursor user calls the brain as MCP tools — `search_brain`, `get_page`, `list_patterns`, `trigger_workflow` — without leaving their editor.
 - **Automation:** detected workflow patterns (e.g. "support email → Linear ticket → draft reply") compile into Claude skill packs / n8n / Zapier so the brain doesn't just observe — it executes.
 
 ## Who's it for?
 
-20–200-person companies (typically Series A/B, AI-native or AI-curious) where:
-- Information is fragmented across Slack, email, and ticket tools
-- New hires take weeks to find context
-- The same workflows repeat constantly but nobody's automated them
-- You don't want your data sitting on a third-party SaaS
+- **Personal tier:** founders, solo operators, individual contributors who want their own knowledge graph from their work tools without trusting a third party.
+- **Team tier:** 20–200-person companies (typically Series A/B, AI-native or AI-curious) where information is fragmented across Slack, email, and ticket tools; new hires take weeks to find context; and your CISO won't let you ship customer emails to a SaaS vendor.
 
-## Why is this different from gbrain / other "company brains"?
+## Why is this different from Amazon Quick / gbrain / other "company brains"?
 
-- **Same data model as [Garry Tan's gbrain](https://github.com/garrytan/gbrain)** — `brain_pages` with compiled_truth + timeline + frontmatter + cross-links + pgvector. You can swap to gbrain CLI on the same vault. We add: automatic ingest from team SaaS, multi-user via Supabase Auth, and an MCP server for editor integration.
-- **You own everything.** One Supabase project per company — your account, your data, your billing. We never see it. Self-hosted on Vercel + Supabase = your infra, your control. No SaaS middleman.
-- **Already shipped infrastructure.** 18 implementation tasks, 21 unit tests, 46 routes, working agent loop — not a deck.
+- **vs. Amazon Quick:** Quick sends your data to AWS. Workflow Miner Personal keeps it on your Mac; Workflow Miner Team keeps it in your own Supabase. Same intelligence, none of the trust ask.
+- **vs. [Garry Tan's gbrain](https://github.com/garrytan/gbrain):** same data model (`brain_pages` with compiled_truth + timeline + frontmatter + cross-links + pgvector — you can swap to gbrain CLI on the same vault). We add: automatic ingest from team SaaS, multi-user team mode, an MCP server for editor integration, and a packaged Mac app for individuals.
 
-## Install (~15 min)
+## Install — Personal tier (~5 min)
+
+1. Download the signed `.app` from [the latest release](https://github.com/iamgagan/workflow-miner/releases/latest).
+2. Open it. Right-click → Open the first time (unsigned-build caveat).
+3. Connect your Gmail / Slack / Linear via OAuth — credentials go into your macOS Keychain.
+4. Hit "Sync Now" and let the brain populate over a few minutes.
+5. Ask the `/brain` chat anything.
+
+Source: [`apps/desktop/README.md`](apps/desktop/README.md).
+
+## Install — Team tier (~15 min)
 
 1. Create a [Supabase](https://app.supabase.com) project (free tier works).
 2. Run [`packages/engine/src/brain/schema.sql`](packages/engine/src/brain/schema.sql) in the SQL editor.
@@ -33,7 +53,7 @@ Most teams have their knowledge scattered across 8 SaaS tools. Workflow Miner pu
 5. Sign in at `<your-domain>/login`, hit `/brain`, ask a question.
 6. Optional: add `@workflow-miner/mcp` to your Claude Code config to query the brain from your editor.
 
-Detailed setup is below.
+Detailed setup in [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 ---
 
@@ -80,7 +100,7 @@ workflow-miner/
 │   │       │                     #  - syncCompanyData (per-source sync)
 │   │       │                     #  - executePattern (workflow trigger)
 │   │       └── lib/supabase/     # Supabase factories (browser/server/admin)
-│   └── desktop/              # FROZEN: macOS Tauri shell from v0.1.0-alpha.1
+│   └── desktop/              # Personal tier: macOS Tauri shell + PGlite (single-user, local)
 └── packages/
     └── engine/               # @workflow-miner/engine
         └── src/

@@ -2,6 +2,11 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function updateSession(request: NextRequest) {
+  // Desktop mode: no hosted auth, no redirects. Trivial passthrough.
+  if (process.env.WORKFLOW_MINER_MODE === "desktop") {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -34,10 +39,11 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isPublicRoute = 
-    request.nextUrl.pathname.startsWith('/login') || 
-    request.nextUrl.pathname.startsWith('/auth') || 
-    request.nextUrl.pathname.startsWith('/api') || 
+  // Public routes — bypass auth redirect.
+  const isPublicRoute =
+    request.nextUrl.pathname.startsWith('/login') ||
+    request.nextUrl.pathname.startsWith('/auth') ||
+    request.nextUrl.pathname.startsWith('/api') ||
     request.nextUrl.pathname === '/';
 
   if (!user && !isPublicRoute) {

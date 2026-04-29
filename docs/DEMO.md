@@ -5,6 +5,12 @@
 > **Length:** 90 seconds (60s ideal, 120s max). Past 90s, completion rate drops sharply.
 >
 > **Format:** screen recording, no face cam (face cam adds 30s of "let me intro myself" — skip it). Voiceover after the fact via QuickTime + iMovie or Loom's built-in.
+>
+> **Two-tier framing.** Workflow Miner ships in two modes from one codebase:
+>   - **Personal** — native macOS app, PGlite on disk, your data never leaves your Mac
+>   - **Team** — cloud, self-hosted on the company's own Supabase + Vercel, multi-user
+>
+> The 90s demo below leads with the **Team** tier (Cloud + MCP + Markdown export — strongest for YC's Company Brain RFS). For a personal-first audience (X, Hacker News, individual founders), reorder to lead with the Mac app and slot the cloud as the upsell — see "Variant: Personal-first" at the bottom.
 
 ---
 
@@ -90,3 +96,42 @@ Pick the one that matches the recipient.
 - Post the demo on Wednesday between 10–11am ET (highest founder-Twitter engagement).
 - Set a calendar reminder for 24h after posting to reply to every comment that asks "how does it compare to X" with a direct, honest answer (don't dodge).
 - Track who likes / RTs — those are your design-partner DM list.
+
+## Variant: Personal-first script (for individual / HN / X audiences)
+
+Same 3 shots, different opener. Frames the Mac app as the lead product and the cloud as the team upsell.
+
+### Shot 1 — Mac app launch (0:00–0:30)
+
+**Screen:** macOS desktop. Click the Workflow Miner `.app`. Tauri window opens to `/connectors`.
+
+**Action:**
+1. Click "Connect with Google" on the Gmail card.
+2. macOS browser opens, OAuth completes via the loopback flow, Keychain prompt appears.
+3. Cut to `/brain` chat. Ask: *"Summarize what I worked on this week from my emails."*
+4. Streaming response with sources from real Gmail threads.
+
+**Voiceover:**
+> *"This is Workflow Miner Personal. Native Mac app. My Gmail, Slack, and Linear all sync into a brain that lives entirely on this laptop — PGlite on disk, OAuth tokens in the macOS Keychain. Nothing leaves my machine for the brain itself; OpenAI calls only happen when I ask the chat agent a question. I can verify it in Activity Monitor. That's the trust pitch — not 'we promise we don't peek,' actually nothing to peek at."*
+
+### Shot 2 — Same brain in Claude Code (0:30–1:00)
+
+**Screen:** Claude Code. MCP config points at `http://127.0.0.1:<port>` (the local Tauri sidecar).
+
+**Action:**
+1. Type into Claude Code: *"Use the company-brain MCP to find what I emailed Garry about last month."*
+2. Claude Code calls `mcp__company-brain__search_brain`. Results appear from local PGlite.
+
+**Voiceover:**
+> *"Same brain, exposed as MCP. Every editor that speaks Model Context Protocol — Claude Code, Cursor — can query my Mac's local brain. Still nothing leaving the laptop."*
+
+### Shot 3 — Upgrade to Team (1:00–1:30)
+
+**Screen:** browser → `<your-company>.com` cloud deployment.
+
+**Action:**
+1. Show the Team-tier dashboard with multiple users in `/settings/api-keys`.
+2. Mention: "When my whole company needs this, same codebase deploys to our own Supabase + Vercel. Five teammates, one brain, our infrastructure — Amazon never sees it."
+
+**Voiceover:**
+> *"And when your team grows, same code deploys to your own Supabase + Vercel. The brain shifts from 'on my Mac' to 'in our cloud account' — never on someone else's. That's Workflow Miner. Personal tier on the Mac App Store, Team tier as a one-click Vercel deploy. Link in the description."*
