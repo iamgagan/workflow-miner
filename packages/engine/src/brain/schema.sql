@@ -158,3 +158,34 @@ LANGUAGE sql STABLE AS $$
   ORDER BY bp.embedding <=> query_embedding ASC
   LIMIT match_count;
 $$;
+
+-- ─── gbrain-alignment additions (2026-04-29) ──────────────────────────────
+
+-- Dream Cycles: track when each page was last LLM-enriched.
+ALTER TABLE brain_pages
+  ADD COLUMN IF NOT EXISTS last_enriched_at TIMESTAMPTZ;
+
+-- Index helps the "find stale pages" query in the dream cycle find work fast.
+CREATE INDEX IF NOT EXISTS brain_pages_last_enriched_idx
+  ON brain_pages (last_enriched_at NULLS FIRST);
+
+-- MCP server: per-user API keys.
+CREATE TABLE IF NOT EXISTS api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  key_hash TEXT NOT NULL UNIQUE,        -- SHA-256 of the raw key; raw never persisted
+  label TEXT NOT NULL,
+  last_used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  revoked_at TIMESTAMPTZ
+);
+
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "users see their own keys" ON api_keys
+  FOR ALL TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+CREATE INDEX IF NOT EXISTS api_keys_hash_idx ON api_keys (key_hash) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS api_keys_user_idx ON api_keys (user_id);
