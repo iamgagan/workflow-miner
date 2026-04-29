@@ -260,6 +260,56 @@ export const executePattern = inngest.createFunction(
   }
 );
 
+const ENRICH_MODEL = process.env.OPENAI_MODEL_ENRICH ?? "gpt-4o-mini";
+
+export async function refreshCompiledTruth(page: {
+  id: number;
+  slug: string;
+  title: string;
+  compiled_truth: string | null;
+  timeline: string | null;
+}): Promise<string | null> {
+  // Pull the most recent timeline entries to ground the summary.
+  const { data: entries } = await supa()
+    .from("brain_timeline")
+    .select("date, source, summary, detail")
+    .eq("page_id", page.id)
+    .order("date", { ascending: false })
+    .limit(20);
+
+  if (!entries || entries.length === 0) {
+    // No new evidence — keep the existing compiled_truth.
+    return page.compiled_truth;
+  }
+
+  const evidence = entries
+    .map((e: { date: string; source: string; summary: string; detail: string | null }) =>
+      `- ${e.date} (${e.source}) ${e.summary}${e.detail ? ` — ${e.detail}` : ""}`)
+    .join("\n");
+
+  const prompt = `You are summarizing a knowledge-graph page about "${page.title}".
+Existing summary:
+${page.compiled_truth ?? "(none)"}
+
+Recent timeline entries:
+${evidence}
+
+Write a concise 2-3 sentence summary capturing what is currently true about this entity. No preamble. No bullet points.`;
+
+  try {
+    const response = await oai().chat.completions.create({
+      model: ENRICH_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 200,
+      temperature: 0.2,
+    });
+    return response.choices[0]?.message?.content?.trim() ?? page.compiled_truth;
+  } catch (err) {
+    console.error(`refreshCompiledTruth failed for page ${page.id}:`, err);
+    return page.compiled_truth;
+  }
+}
+
 // Nightly LLM-enrichment pass. Walks every page touched since its last
 // enrichment and refreshes its compiled_truth, extracts entities, re-embeds
 // if the truth changed. Bounded by DREAM_CYCLE_MAX_PAGES_PER_RUN per run.
@@ -288,12 +338,22 @@ export const dreamCycle = inngest.createFunction(
 
     for (const page of stalePages) {
       await step.run(`enrich-page-${page.id}`, async () => {
-        // Implemented in Task B2 (compiled-truth refresh) and B3 (entities).
+        const newCompiledTruth = await refreshCompiledTruth(page);
+
+        const updates: Record<string, unknown> = {
+          last_enriched_at: new Date().toISOString(),
+        };
+
+        if (newCompiledTruth && newCompiledTruth !== page.compiled_truth) {
+          updates.compiled_truth = newCompiledTruth;
+          updates.embedding = await generateEmbedding(`${page.title} ${newCompiledTruth}`);
+        }
+
         const { error } = await supa()
           .from("brain_pages")
-          .update({ last_enriched_at: new Date().toISOString() })
+          .update(updates)
           .eq("id", page.id);
-        if (error) throw new Error(`mark-enriched failed: ${error.message}`);
+        if (error) throw new Error(`update-page-${page.id} failed: ${error.message}`);
       });
     }
 
