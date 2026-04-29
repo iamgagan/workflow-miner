@@ -1,0 +1,33 @@
+{
+  "name": "@workflow-miner/mcp",
+  "version": "0.1.0",
+  "description": "Stdio MCP server for the Workflow Miner Company Brain. Lets Claude Code, Cursor, and other MCP clients query your company's brain.",
+  "type": "module",
+  "bin": {
+    "wm-mcp": "./bin/wm-mcp.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "pnpm build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
