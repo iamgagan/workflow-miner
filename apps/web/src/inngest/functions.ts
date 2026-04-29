@@ -1,6 +1,8 @@
 import { inngest } from "./client";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
+import { Octokit } from "@octokit/rest";
+import { renderPageToMarkdown, slugToFilePath, type BrainPageRow, type BrainLinkRow } from "./markdown";
 import type { BrainClient as EngineBrainClient } from "@workflow-miner/engine";
 
 // Lazy clients — created on first use, not at module load. Lets `next build`
@@ -438,5 +440,125 @@ export const dreamCycle = inngest.createFunction(
     });
 
     return { pagesEnriched: stalePages.length };
+  }
+);
+
+// ─── Markdown export to GitHub ────────────────────────────────────────────
+
+let _octokit: Octokit | null = null;
+function octo(): Octokit {
+  if (!_octokit) {
+    _octokit = new Octokit({ auth: process.env.GITHUB_EXPORT_PAT });
+  }
+  return _octokit;
+}
+
+function gitHubTarget(): { owner: string; repo: string; branch: string } | null {
+  const repoEnv = process.env.GITHUB_EXPORT_REPO;
+  if (!process.env.GITHUB_EXPORT_PAT || !repoEnv) return null;
+  const [owner, repo] = repoEnv.split("/");
+  if (!owner || !repo) return null;
+  return { owner, repo, branch: process.env.GITHUB_EXPORT_BRANCH ?? "main" };
+}
+
+// Mirror brain_pages to a user-owned GitHub repo as gbrain-format markdown.
+// One-way: Postgres → Markdown. Bypassed entirely if GITHUB_EXPORT_PAT or
+// GITHUB_EXPORT_REPO are unset.
+export const exportToGit = inngest.createFunction(
+  {
+    id: "export-to-git",
+    name: "Markdown export to GitHub",
+    triggers: [
+      { event: "dream/cycle.completed" },
+      { event: "export/run.requested" },
+    ],
+  },
+  async ({ step, logger }) => {
+    const target = gitHubTarget();
+    if (!target) {
+      logger.info("export-to-git: skipped (GITHUB_EXPORT_* not configured)");
+      return { skipped: true };
+    }
+    const { owner, repo, branch } = target;
+
+    const { pages, links } = await step.run("snapshot", async () => {
+      const pagesRes = await supa()
+        .from("brain_pages")
+        .select("id, slug, type, title, compiled_truth, timeline, frontmatter, created_at, updated_at");
+      if (pagesRes.error) throw new Error(`snapshot pages: ${pagesRes.error.message}`);
+
+      const linksRes = await supa()
+        .from("brain_links")
+        .select("from_slug, to_slug, link_type");
+      if (linksRes.error) throw new Error(`snapshot links: ${linksRes.error.message}`);
+
+      return {
+        pages: (pagesRes.data ?? []) as BrainPageRow[],
+        links: (linksRes.data ?? []) as BrainLinkRow[],
+      };
+    });
+
+    if (pages.length === 0) {
+      logger.info("export-to-git: nothing to export");
+      return { exported: 0 };
+    }
+
+    const baseRef = await step.run("get-base-ref", async () => {
+      const res = await octo().git.getRef({ owner, repo, ref: `heads/${branch}` });
+      return res.data.object.sha;
+    });
+
+    const baseTreeSha = await step.run("get-base-tree", async () => {
+      const res = await octo().git.getCommit({ owner, repo, commit_sha: baseRef });
+      return res.data.tree.sha;
+    });
+
+    const treeEntries = await step.run("create-blobs", async () => {
+      const entries: { path: string; mode: "100644"; type: "blob"; sha: string }[] = [];
+      for (const page of pages) {
+        const content = renderPageToMarkdown(page, links);
+        const blob = await octo().git.createBlob({ owner, repo, content, encoding: "utf-8" });
+        entries.push({
+          path: slugToFilePath(page.type, page.slug),
+          mode: "100644",
+          type: "blob",
+          sha: blob.data.sha,
+        });
+      }
+      return entries;
+    });
+
+    const newTreeSha = await step.run("create-tree", async () => {
+      const res = await octo().git.createTree({
+        owner,
+        repo,
+        base_tree: baseTreeSha,
+        tree: treeEntries,
+      });
+      return res.data.sha;
+    });
+
+    const newCommitSha = await step.run("create-commit", async () => {
+      const res = await octo().git.createCommit({
+        owner,
+        repo,
+        message: `wm: brain mirror ${new Date().toISOString().slice(0, 10)}`,
+        tree: newTreeSha,
+        parents: [baseRef],
+      });
+      return res.data.sha;
+    });
+
+    await step.run("update-ref", async () => {
+      await octo().git.updateRef({
+        owner,
+        repo,
+        ref: `heads/${branch}`,
+        sha: newCommitSha,
+        force: false,
+      });
+    });
+
+    return { exported: pages.length, commit: newCommitSha };
   }
 );
