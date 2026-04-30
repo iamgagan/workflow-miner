@@ -12,13 +12,19 @@ A Mac app that watches your work tools (Gmail, Calendar, Slack, Linear) for a fe
 
 1. Download the latest `Workflow Miner_<version>_universal.dmg` from the release email.
 2. Double-click the `.dmg`. Drag **Workflow Miner** into **Applications**.
-3. Open **Applications**, find **Workflow Miner**. **Right-click → Open** (don't double-click on the first launch).
-4. macOS will show a dialog: "macOS cannot verify the developer of 'Workflow Miner'. Are you sure you want to open it?" Click **Open**.
-5. The app launches. First launch takes ~10 seconds while the bundled Next.js sidecar starts.
+3. Open **Applications**, double-click **Workflow Miner**. macOS will show:
+   > *"Apple could not verify 'Workflow Miner' is free of malware that may harm your Mac or compromise your privacy."*
+   with two buttons: **Move to Trash** and **Done**.
+4. **Click Done.** (Do *not* click "Move to Trash" — that deletes the app.)
+5. Open **System Settings** (Apple menu → System Settings) → **Privacy & Security** in the sidebar → scroll down to the **Security** section.
+6. You'll see *"Workflow Miner was blocked to protect your Mac"* with an **Open Anyway** button. Click **Open Anyway**.
+7. Authenticate with your Mac password or Touch ID.
+8. Back in Applications, double-click **Workflow Miner** again. A new dialog appears with an **Open** button — click **Open**.
+9. The app launches. First launch takes ~10 seconds while the bundled Next.js sidecar starts.
 
-After the first right-click → Open, every subsequent launch is a normal double-click — macOS remembers the decision.
+After this one-time bypass, every subsequent launch is a normal double-click — macOS remembers the decision.
 
-> **Why the right-click dance?** This build is signed with our Apple Developer ID but not yet notarized — Apple's notary service was backed up when we cut the release, and we'd rather get the build into your hands today than wait. The next build (alpha.3) will be fully notarized and double-clickable. The signed cert is the security-relevant part; notarization is a UX polish.
+> **Why the bypass dance?** This build is signed with our Apple Developer ID but not yet notarized — Apple's notary service was backed up when we cut the release. The next build (alpha.3) will be fully notarized and you'll be able to skip steps 3–8 entirely. The signed cert is the security-relevant part; notarization is a UX polish that lets you skip the Settings detour. macOS 15 (Sequoia) made this detour mandatory; on macOS 14 and earlier the older right-click → Open shortcut still works.
 
 ## Connecting your tools
 
