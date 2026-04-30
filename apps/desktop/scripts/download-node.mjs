@@ -96,4 +96,33 @@ for (const [triple, distName] of wanted) {
   console.log(`[download-node] ${triple}: ok (${(size / 1e6).toFixed(0)}MB)`);
 }
 
+// ── Build the universal binary for `tauri build --target universal-apple-darwin`
+// Tauri's externalBin lookup for that target wants a single fat binary at
+// `binaries/node-universal-apple-darwin`. lipo merges the per-arch ones.
+const arm64Path = resolve(binariesDir, "node-aarch64-apple-darwin");
+const x64Path = resolve(binariesDir, "node-x86_64-apple-darwin");
+const universalPath = resolve(binariesDir, "node-universal-apple-darwin");
+
+if (existsSync(arm64Path) && existsSync(x64Path)) {
+  if (existsSync(universalPath)) {
+    const size = statSync(universalPath).size;
+    if (size > 100_000_000) {
+      console.log(`[download-node] universal: already present (${(size / 1e6).toFixed(0)}MB) — skipping lipo`);
+    } else {
+      // Truncated — re-create.
+      spawnSync("rm", ["-f", universalPath]);
+    }
+  }
+  if (!existsSync(universalPath)) {
+    console.log("[download-node] universal: lipo-merging arm64 + x86_64");
+    const lipo = spawnSync("lipo", ["-create", arm64Path, x64Path, "-output", universalPath], { stdio: "inherit" });
+    if (lipo.status !== 0) {
+      throw new Error(`lipo failed (status ${lipo.status})`);
+    }
+    spawnSync("chmod", ["+x", universalPath], { stdio: "inherit" });
+    const size = statSync(universalPath).size;
+    console.log(`[download-node] universal: ok (${(size / 1e6).toFixed(0)}MB)`);
+  }
+}
+
 console.log("[download-node] done");
