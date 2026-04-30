@@ -175,9 +175,14 @@ async function runDesktopIngest(
             allErrors.push({ source, message: err.message });
           }
         }
-        // (Skipping the lastSync timestamp UPDATE here — local-shim doesn't
-        //  implement .update(). The timestamp is already refreshed when the
-        //  user reconnects via OAuth, which is enough signal for the alpha.)
+        await admin
+          .from("connector_tokens")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("user_id", userId)
+          .eq(
+            "provider",
+            source === "gmail" || source === "calendar" ? "google" : source,
+          );
         // result is consumed for side effects; ignore the count detail here.
         void result;
       } catch (err) {

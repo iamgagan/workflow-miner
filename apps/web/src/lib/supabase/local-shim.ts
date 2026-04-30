@@ -242,13 +242,14 @@ type Filter =
 
 interface QueryState {
   readonly table: string;
-  op: "select" | "insert" | "upsert" | "delete";
+  op: "select" | "insert" | "upsert" | "delete" | "update";
   columns: string;
   filters: Filter[];
   orderBy: { col: string; ascending: boolean } | null;
   limit: number | null;
   insertRows: any[];
   upsertOnConflict: string | null;
+  updateValues: Record<string, unknown>;
   returnSelect: string | null;
   count: "exact" | null;
   head: boolean;
@@ -337,6 +338,7 @@ class QueryBuilder<T = any> {
       limit: null,
       insertRows: [],
       upsertOnConflict: null,
+      updateValues: {},
       returnSelect: null,
       count: null,
       head: false,
@@ -384,6 +386,22 @@ class QueryBuilder<T = any> {
    */
   delete(): this {
     this.state.op = "delete";
+    return this;
+  }
+
+  /**
+   * UPDATE rows matching the chained `.eq()` filters with the given values.
+   *   client.from("connector_tokens")
+   *     .update({ updated_at: new Date().toISOString() })
+   *     .eq("user_id", userId)
+   *     .eq("provider", "google")
+   *
+   * No-op if no filters are set — matches Supabase's safety behaviour for
+   * filterless UPDATEs (which would otherwise rewrite every row).
+   */
+  update(values: Record<string, unknown>): this {
+    this.state.op = "update";
+    this.state.updateValues = values;
     return this;
   }
 
@@ -467,6 +485,8 @@ class QueryBuilder<T = any> {
           return await this.executeUpsert<U>(db);
         case "delete":
           return await this.executeDelete<U>(db);
+        case "update":
+          return await this.executeUpdate<U>(db);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -486,24 +506,26 @@ class QueryBuilder<T = any> {
     }
   }
 
-  private buildWhere(): { sql: string; params: unknown[] } {
+  private buildWhere(paramOffset = 0): { sql: string; params: unknown[] } {
     if (this.state.filters.length === 0) return { sql: "", params: [] };
     const parts: string[] = [];
     const params: unknown[] = [];
+
+    const placeholder = () => `$${paramOffset + params.length}`;
 
     for (const f of this.state.filters) {
       switch (f.kind) {
         case "eq":
           params.push(f.val);
-          parts.push(`${columnExpr(f.col)} = $${params.length}`);
+          parts.push(`${columnExpr(f.col)} = ${placeholder()}`);
           break;
         case "gte":
           params.push(f.val);
-          parts.push(`${columnExpr(f.col)} >= $${params.length}`);
+          parts.push(`${columnExpr(f.col)} >= ${placeholder()}`);
           break;
         case "lt":
           params.push(f.val);
-          parts.push(`${columnExpr(f.col)} < $${params.length}`);
+          parts.push(`${columnExpr(f.col)} < ${placeholder()}`);
           break;
         case "in": {
           if (f.vals.length === 0) {
@@ -513,14 +535,14 @@ class QueryBuilder<T = any> {
           const placeholders: string[] = [];
           for (const v of f.vals) {
             params.push(v);
-            placeholders.push(`$${params.length}`);
+            placeholders.push(placeholder());
           }
           parts.push(`${columnExpr(f.col)} IN (${placeholders.join(", ")})`);
           break;
         }
         case "or": {
           // Translate Supabase's or("a.ilike.x,b.ilike.y") → (a ILIKE x OR b ILIKE y)
-          parts.push(`(${translateOrExpr(f.expr, params)})`);
+          parts.push(`(${translateOrExpr(f.expr, params, paramOffset)})`);
           break;
         }
       }
@@ -602,6 +624,31 @@ class QueryBuilder<T = any> {
     const result = await db.query(sql, params);
     return { data: result.rows as U, error: null };
   }
+
+  private async executeUpdate<U>(db: PGliteInstance): Promise<ShimResult<U>> {
+    const entries = Object.entries(this.state.updateValues);
+    if (entries.length === 0) {
+      return { data: [] as unknown as U, error: null };
+    }
+    if (this.state.filters.length === 0) {
+      return {
+        data: null,
+        error: {
+          message: "UPDATE without WHERE filter is refused by local-shim",
+        },
+      };
+    }
+    const params: unknown[] = [];
+    const setClauses = entries.map(([col, val]) => {
+      params.push(val);
+      return `${quoteIdent(col)} = $${params.length}`;
+    });
+    const { sql: whereSql, params: whereParams } = this.buildWhere(params.length);
+    params.push(...whereParams);
+    const sql = `UPDATE ${quoteIdent(this.state.table)} SET ${setClauses.join(", ")}${whereSql}`;
+    const result = await db.query(sql, params);
+    return { data: result.rows as U, error: null };
+  }
 }
 
 // ── SQL generation helpers ───────────────────────────────────────────
@@ -610,9 +657,10 @@ class QueryBuilder<T = any> {
  * Translate a Supabase `or()` expression (e.g. `title.ilike.%q%,compiled_truth.ilike.%q%`)
  * into a SQL expression, appending values to the params array.
  */
-function translateOrExpr(expr: string, params: unknown[]): string {
+function translateOrExpr(expr: string, params: unknown[], paramOffset = 0): string {
   const clauses = expr.split(",").map((c) => c.trim()).filter(Boolean);
   const parts: string[] = [];
+  const placeholder = () => `$${paramOffset + params.length}`;
   for (const clause of clauses) {
     // clause format: column.op.value  (value may contain `%` for ilike patterns)
     const firstDot = clause.indexOf(".");
@@ -627,11 +675,11 @@ function translateOrExpr(expr: string, params: unknown[]): string {
     switch (op) {
       case "ilike":
         params.push(value);
-        parts.push(`${columnExpr(col)} ILIKE $${params.length}`);
+        parts.push(`${columnExpr(col)} ILIKE ${placeholder()}`);
         break;
       case "eq":
         params.push(value);
-        parts.push(`${columnExpr(col)} = $${params.length}`);
+        parts.push(`${columnExpr(col)} = ${placeholder()}`);
         break;
       default:
         // Unknown op — skip rather than crash
