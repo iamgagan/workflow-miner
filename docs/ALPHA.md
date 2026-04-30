@@ -62,8 +62,7 @@ After at least one connector finishes its first sync (you'll see a green "synced
 
 Please send anything — broken flows, weird patterns, "I expected X but got Y", whether the trust pitch resonates:
 
-- **Bugs / weird stuff:** reply to the alpha invite email
-- **Bigger thoughts:** book 15 min with me at <calendar-link>
+- **Bugs / weird stuff / bigger thoughts:** reply to the alpha invite email
 - **Logs to attach when something breaks:** open Finder → `Go → Go to Folder…` → paste `~/Library/Application Support/WorkflowMiner/logs` → drop into the email
 
 Logs are local-only and never auto-uploaded. Read them yourself first to confirm there's nothing sensitive before sending.
