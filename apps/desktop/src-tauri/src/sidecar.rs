@@ -73,9 +73,20 @@ fn pick_port() -> Result<u16, SidecarError> {
     portpicker::pick_unused_port().ok_or(SidecarError::NoFreePort)
 }
 
-/// Locate the bundled Next.js standalone server. In dev this is the
-/// monorepo `apps/web` directory; in prod it's a copy under
-/// `apps/desktop/resources/next/`.
+/// Locate the directory containing the Next.js standalone `server.js`
+/// entrypoint. In production that's the `apps/web/` subdirectory of the
+/// bundled standalone tree; in dev it's the monorepo `apps/web/` directly.
+///
+/// Bundle layout (Tauri 2 stores `../resources/next` under `_up_/resources/next`
+/// because the source path traverses up out of `src-tauri/`):
+///
+/// ```text
+/// Workflow Miner.app/Contents/Resources/_up_/resources/next/
+///   ├── apps/web/server.js     ← entrypoint we spawn
+///   ├── node_modules/
+///   ├── package.json
+///   └── packages/engine/
+/// ```
 fn locate_next_root() -> Result<PathBuf, SidecarError> {
     if let Ok(custom) = env::var("WORKFLOW_MINER_NEXT_ROOT") {
         let p = PathBuf::from(custom);
@@ -84,20 +95,42 @@ fn locate_next_root() -> Result<PathBuf, SidecarError> {
         }
     }
 
-    // Resolve relative to the current executable in production builds.
+    // Production: resolve relative to the executable.
+    // Contents/MacOS/workflow-miner-desktop -> Contents/Resources/_up_/resources/next/apps/web
     if let Ok(exe) = env::current_exe() {
         let candidate = exe
             .parent()
             .and_then(|p| p.parent())
-            .map(|p| p.join("Resources").join("next"));
+            .map(|p| {
+                p.join("Resources")
+                    .join("_up_")
+                    .join("resources")
+                    .join("next")
+                    .join("apps")
+                    .join("web")
+            });
         if let Some(path) = candidate {
-            if path.exists() {
+            if path.join("server.js").exists() {
                 return Ok(path);
             }
         }
     }
 
-    // Fall back to the dev path under the monorepo.
+    // Dev fallback: monorepo apps/web with a built standalone bundle.
+    let dev_standalone = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("web")
+        .join(".next")
+        .join("standalone")
+        .join("apps")
+        .join("web");
+    if dev_standalone.join("server.js").exists() {
+        return Ok(dev_standalone);
+    }
+
+    // Last-ditch dev fallback: raw apps/web (no standalone build yet — only
+    // useful with WORKFLOW_MINER_DEV_SERVER pointing at `next dev`).
     let dev_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
@@ -107,7 +140,7 @@ fn locate_next_root() -> Result<PathBuf, SidecarError> {
     }
 
     Err(SidecarError::MissingResource(
-        "next.js standalone bundle".into(),
+        "next.js standalone bundle (apps/web/server.js)".into(),
     ))
 }
 
@@ -142,12 +175,15 @@ pub async fn start(_app: &AppHandle, data_dir: &Path) -> Result<SidecarHandle, S
         port
     );
 
-    // We launch via the bundled bootstrap script which knows how to invoke
-    // either `next start` (production) or `next dev` (development).
-    let script = next_root
-        .parent()
-        .map(|p| p.join("desktop").join("scripts").join("run-next.mjs"))
-        .ok_or_else(|| SidecarError::MissingResource("run-next.mjs".into()))?;
+    // Next.js standalone produces `server.js` as its self-bootstrapping
+    // entrypoint. It honours PORT/HOSTNAME from env, so no wrapper script
+    // is needed in production.
+    let script = next_root.join("server.js");
+    if !script.exists() {
+        return Err(SidecarError::MissingResource(
+            format!("server.js not found at {}", script.display()),
+        ));
+    }
 
     let node_bin = locate_node();
     log::info!("using node binary: {}", node_bin.display());
@@ -156,6 +192,7 @@ pub async fn start(_app: &AppHandle, data_dir: &Path) -> Result<SidecarHandle, S
     command
         .arg(&script)
         .current_dir(&next_root)
+        .env("HOSTNAME", "127.0.0.1")
         .env("WORKFLOW_MINER_MODE", "desktop")
         .env("WORKFLOW_MINER_DATA_DIR", data_dir)
         .env("PORT", port.to_string())
