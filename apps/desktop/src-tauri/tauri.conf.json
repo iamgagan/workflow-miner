@@ -50,8 +50,8 @@
       "frameworks": [],
       "minimumSystemVersion": "11.0",
       "exceptionDomain": "127.0.0.1",
-      "signingIdentity": "Developer ID Application: Gagandeep Singh (2LY64BMQ38)",
-      "providerShortName": "2LY64BMQ38",
+      "signingIdentity": "Developer ID Application: Gagandeep Singh (48A323RMC9)",
+      "providerShortName": "48A323RMC9",
       "entitlements": "entitlements.plist",
       "dmg": {
         "appPosition": { "x": 180, "y": 170 },

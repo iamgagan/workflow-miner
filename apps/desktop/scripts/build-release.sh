@@ -2,7 +2,7 @@
 # Build a signed + notarized universal macOS .dmg for distribution.
 #
 # Prereqs (one-time):
-#   1. "Developer ID Application: Gagandeep Singh (2LY64BMQ38)" cert in login keychain.
+#   1. "Developer ID Application: Gagandeep Singh (48A323RMC9)" cert in login keychain.
 #      Verify with: security find-identity -v -p codesigning
 #   2. App Store Connect API key (.p8) saved at ~/private_keys/AuthKey_<KEY_ID>.p8
 #   3. Three env vars in your shell rc OR exported before invoking this script:
@@ -23,8 +23,8 @@ DESKTOP_DIR="$REPO_ROOT/apps/desktop"
 echo "==> Workflow Miner: signed + notarized release build"
 
 # ── 1. Sanity-check signing identity ────────────────────────────────────
-if ! security find-identity -v -p codesigning | grep -q "Developer ID Application: Gagandeep Singh (2LY64BMQ38)"; then
-  echo "ERROR: 'Developer ID Application: Gagandeep Singh (2LY64BMQ38)' not found in keychain."
+if ! security find-identity -v -p codesigning | grep -q "Developer ID Application: Gagandeep Singh (48A323RMC9)"; then
+  echo "ERROR: 'Developer ID Application: Gagandeep Singh (48A323RMC9)' not found in keychain."
   echo "       Create it at https://developer.apple.com/account/resources/certificates/list"
   echo "       and double-click the downloaded .cer to install it."
   exit 1
