@@ -12,9 +12,13 @@ A Mac app that watches your work tools (Gmail, Calendar, Slack, Linear) for a fe
 
 1. Download the latest `Workflow Miner_<version>_universal.dmg` from the release email.
 2. Double-click the `.dmg`. Drag **Workflow Miner** into **Applications**.
-3. Open **Workflow Miner** from Applications. The first launch can take ~10 seconds while the bundled Next.js sidecar starts up.
+3. Open **Applications**, find **Workflow Miner**. **Right-click → Open** (don't double-click on the first launch).
+4. macOS will show a dialog: "macOS cannot verify the developer of 'Workflow Miner'. Are you sure you want to open it?" Click **Open**.
+5. The app launches. First launch takes ~10 seconds while the bundled Next.js sidecar starts.
 
-That's it. No Terminal commands, no Node install, no Gatekeeper bypass — the build is signed and notarized.
+After the first right-click → Open, every subsequent launch is a normal double-click — macOS remembers the decision.
+
+> **Why the right-click dance?** This build is signed with our Apple Developer ID but not yet notarized — Apple's notary service was backed up when we cut the release, and we'd rather get the build into your hands today than wait. The next build (alpha.3) will be fully notarized and double-clickable. The signed cert is the security-relevant part; notarization is a UX polish.
 
 ## Connecting your tools
 
