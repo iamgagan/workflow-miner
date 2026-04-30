@@ -5494,7 +5494,7 @@ dependencies = [
 
 [[package]]
 name = "workflow-miner-desktop"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "dirs 5.0.1",
  "env_logger",

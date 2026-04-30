@@ -37,3 +37,7 @@ apps/desktop/src-tauri/binaries/node-*
 # Notarization keys
 private_keys/
 *.p8
+
+# Local agent / session state (Claude Code, OMC, etc.)
+.claude/
+.omc/
