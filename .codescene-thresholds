@@ -1,0 +1,7 @@
+# CodeScene Code Health ratchet thresholds.
+# These are floors — they only ever go UP, never down (see ADR 0004).
+# Initial values are placeholders. The first CodeScene analysis will replace
+# them with floor(now * 100) / 100, after which the ratchet takes over.
+# Keep CODESCENE_PAT + CODESCENE_PROJECT_ID unset and the husky hook is a no-op.
+HOTSPOT_THRESHOLD=0.0
+AVERAGE_THRESHOLD=0.0

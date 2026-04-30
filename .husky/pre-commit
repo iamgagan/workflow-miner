@@ -1,0 +1,50 @@
+#!/bin/sh
+# Pre-commit: fast local gate (<30s on a typical change).
+# Runs typecheck only on staged TS/TSX. Heavy checks live in pre-push.
+# Skip with HUSKY=0 if you must (CI re-runs on PR).
+#
+# Lint is intentionally NOT run here: `next lint` is deprecated and prompts
+# interactively in Next 15. Restore once we migrate to the ESLint CLI.
+set -e
+
+# Make pnpm/node available when git launches the hook from a GUI client.
+ensure_node_tooling() {
+  if command -v node >/dev/null 2>&1 && command -v pnpm >/dev/null 2>&1; then
+    return 0
+  fi
+  NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh" --no-use
+    nvm use --silent default >/dev/null 2>&1 || true
+  fi
+  if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
+    echo "pre-commit: node and pnpm must be on PATH (hook launched without your shell rc)."
+    exit 1
+  fi
+}
+
+ensure_node_tooling
+
+STAGED_TS=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' || true)
+if [ -z "$STAGED_TS" ]; then
+  echo "pre-commit: no TS/TSX staged — skipping typecheck."
+  exit 0
+fi
+
+# Engine first — web depends on its compiled output.
+case "$STAGED_TS" in
+  *packages/engine/*)
+    echo "pre-commit: typecheck (engine)…"
+    pnpm --filter @workflow-miner/engine exec tsc --noEmit
+    ;;
+esac
+
+case "$STAGED_TS" in
+  *apps/web/*)
+    echo "pre-commit: typecheck (web)…"
+    pnpm --filter web exec tsc --noEmit
+    ;;
+esac
+
+echo "pre-commit: ok"

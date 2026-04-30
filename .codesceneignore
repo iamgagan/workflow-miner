@@ -1,0 +1,19 @@
+# Files CodeScene should not analyze for code health.
+# Generated, vendored, or fixture code that would skew Hotspot scores.
+node_modules/
+.next/
+dist/
+build/
+out/
+coverage/
+pnpm-lock.yaml
+
+# Tauri shell — Rust code health tracked separately if/when desktop unfreezes further.
+apps/desktop/src-tauri/target/
+
+# Generated SQL migration sidecars — schema lives in packages/engine/src/brain/schema.sql.
+**/*.gen.ts
+**/*.gen.sql
+
+# E2E + tooling scripts — repetitive by design, would hotspot-noise the report.
+apps/desktop/scripts/

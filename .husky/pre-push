@@ -1,0 +1,42 @@
+#!/bin/sh
+# Pre-push: matches CI surface — engine build, web build (with stub envs), web tests.
+# Catches the same breakage CI would, before remote push spends a runner minute.
+# Skip with HUSKY=0 if you must (rare — prefer fixing the failure).
+set -e
+
+ensure_node_tooling() {
+  if command -v node >/dev/null 2>&1 && command -v pnpm >/dev/null 2>&1; then
+    return 0
+  fi
+  NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh" --no-use
+    nvm use --silent default >/dev/null 2>&1 || true
+  fi
+  if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
+    echo "pre-push: node and pnpm must be on PATH."
+    exit 1
+  fi
+}
+
+ensure_node_tooling
+
+START=$(date +%s)
+echo "pre-push: replicating CI locally…"
+
+echo "pre-push: build engine…"
+pnpm --filter @workflow-miner/engine build
+
+echo "pre-push: build web (stub envs)…"
+NEXT_PUBLIC_SUPABASE_URL=https://stub.supabase.co \
+NEXT_PUBLIC_SUPABASE_ANON_KEY=stub \
+SUPABASE_SERVICE_ROLE_KEY=stub \
+OPENAI_API_KEY=stub \
+  pnpm --filter web build
+
+echo "pre-push: test web…"
+pnpm --filter web test
+
+ELAPSED=$(( $(date +%s) - START ))
+echo "pre-push: ok (${ELAPSED}s)"
