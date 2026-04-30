@@ -84,19 +84,35 @@ while IFS= read -r f; do
 done < "$LIST"
 COUNT=$(wc -l < "$MACHO" | tr -d ' ')
 echo "  → $COUNT Mach-O binaries"
+# Sign all non-node Mach-O first. node gets signed AFTER the .app bundle
+# so the .app's recursive sign doesn't strip node's entitlements (the .app
+# sign uses its own entitlements which lack allow-jit/unsigned-executable;
+# without those, V8 can't init and the sidecar dies silently).
 SIGNED=0
 while IFS= read -r f; do
+  if [ "$(basename "$f")" = "node" ]; then
+    continue
+  fi
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$f" 2>/dev/null && SIGNED=$((SIGNED+1))
 done < "$MACHO"
-echo "  → signed $SIGNED of $COUNT"
+echo "  → signed $SIGNED non-node Mach-O (node deferred to post-bundle pass)"
 rm -f "$LIST" "$MACHO"
 
-# Re-sign the .app bundle on top with hardened runtime + entitlements.
+# Sign the .app bundle on top.
 echo "==> Re-signing .app bundle (hardened runtime + entitlements)…"
 codesign --force --options runtime --timestamp \
   --entitlements "$DESKTOP_DIR/src-tauri/entitlements.plist" \
   --sign "$SIGN_ID" "$APP"
-codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -3
+
+# NOW sign node with its V8-required entitlements. This must happen AFTER
+# the .app sign or the bundle's recursive pass overwrites them.
+echo "==> Signing bundled node (V8 entitlements: allow-jit + unsigned-executable + dyld-env)…"
+codesign --force --options runtime --timestamp \
+  --entitlements "$DESKTOP_DIR/src-tauri/entitlements.plist" \
+  --sign "$SIGN_ID" "$APP/Contents/MacOS/node"
+
+codesign --verify --strict --verbose=2 "$APP" 2>&1 | tail -3
+codesign --display --entitlements - "$APP/Contents/MacOS/node" 2>&1 | grep -E "allow-jit" | head -1 || echo "  WARN: node missing allow-jit entitlement"
 
 # ── 6. Submit to Apple notary, wait for verdict, staple the ticket ──────
 echo "==> Submitting to Apple notary…"

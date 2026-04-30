@@ -61,7 +61,16 @@ if (!existsSync(standaloneSrc)) {
 }
 
 console.log(`[build-next] copying standalone bundle → ${resourcesDir}`);
-cpSync(standaloneSrc, resourcesDir, { recursive: true });
+// Preserve symlinks verbatim. pnpm's standalone tree relies on relative
+// symlinks (apps/web/node_modules/next → ../../../node_modules/.pnpm/.../next)
+// so that Next.js's peer-package resolution works (next finds styled-jsx,
+// react, etc. as siblings inside the .pnpm tree). Default cpSync resolves
+// relative symlinks to absolute paths that point outside the .app bundle,
+// breaking everything. dereference: true would copy targets as real files
+// but loses the .pnpm sibling structure → 'Cannot find module styled-jsx'.
+// verbatimSymlinks: true keeps the relative paths intact so resolution
+// stays within the bundle.
+cpSync(standaloneSrc, resourcesDir, { recursive: true, verbatimSymlinks: true });
 
 const standaloneNextStatic = resolve(resourcesDir, "apps", "web", ".next", "static");
 mkdirSync(dirname(standaloneNextStatic), { recursive: true });
