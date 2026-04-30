@@ -80,4 +80,20 @@ if (existsSync(publicSrc)) {
   cpSync(publicSrc, resolve(resourcesDir, "apps", "web", "public"), { recursive: true });
 }
 
+// Copy apps/web/.env.local into the bundle as .env.production so the
+// Next.js sidecar can read GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET / etc. at
+// runtime. These are needed by /api/connectors/google/exchange. Per RFC 8252
+// the desktop OAuth client_secret can be safely embedded in distributed
+// binaries because security comes from the loopback redirect + PKCE.
+const envLocalSrc = resolve(webDir, ".env.local");
+if (existsSync(envLocalSrc)) {
+  const envDest = resolve(resourcesDir, "apps", "web", ".env.production");
+  cpSync(envLocalSrc, envDest);
+  console.log(`[build-next] embedded ${envLocalSrc} → ${envDest}`);
+} else {
+  console.warn(
+    "[build-next] WARN: apps/web/.env.local not found — desktop OAuth flow will fail with 'server_oauth_not_configured'. Run /tmp/wire-oauth.sh or copy .env.local into apps/web/ before building.",
+  );
+}
+
 console.log("[build-next] done");
