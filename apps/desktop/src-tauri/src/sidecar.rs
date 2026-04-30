@@ -111,6 +111,25 @@ fn locate_next_root() -> Result<PathBuf, SidecarError> {
     ))
 }
 
+/// Locate the bundled `node` binary.
+///
+/// In a packaged `.app`, Tauri's `externalBin` mechanism places the binary
+/// alongside the main executable at `Contents/MacOS/node` (the target-triple
+/// suffix is stripped during bundling). In dev — when running via
+/// `cargo run` or `tauri dev` — we fall back to whatever `node` is on PATH
+/// so contributors don't need to populate `src-tauri/binaries/` to iterate.
+fn locate_node() -> PathBuf {
+    if let Ok(exe) = env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let bundled = parent.join("node");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+    PathBuf::from("node")
+}
+
 /// Spawn the Next.js sidecar and wait for it to be ready.
 pub async fn start(_app: &AppHandle, data_dir: &Path) -> Result<SidecarHandle, SidecarError> {
     let port = pick_port()?;
@@ -130,7 +149,10 @@ pub async fn start(_app: &AppHandle, data_dir: &Path) -> Result<SidecarHandle, S
         .map(|p| p.join("desktop").join("scripts").join("run-next.mjs"))
         .ok_or_else(|| SidecarError::MissingResource("run-next.mjs".into()))?;
 
-    let mut command = Command::new("node");
+    let node_bin = locate_node();
+    log::info!("using node binary: {}", node_bin.display());
+
+    let mut command = Command::new(&node_bin);
     command
         .arg(&script)
         .current_dir(&next_root)

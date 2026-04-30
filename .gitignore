@@ -29,3 +29,11 @@ Thumbs.db
 npm-debug.log*
 workflow-miner.db
 .vercel
+
+# Bundled Node.js binaries — downloaded on demand by
+# apps/desktop/scripts/download-node.mjs (~110MB each, two arches).
+apps/desktop/src-tauri/binaries/node-*
+
+# Notarization keys
+private_keys/
+*.p8
