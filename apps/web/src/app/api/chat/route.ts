@@ -67,7 +67,7 @@ Here is the user's current data:
 
 Answer concisely using markdown. Reference specific patterns and data when relevant. If the data above is sparse, still do your best to help the user based on what you know about workflow optimization.`;
 
-async function buildLLMResponse(message: string): Promise<string | null> {
+async function buildLLMResponse(message: string): Promise<{ reply: string | null; error: string | null }> {
   try {
     const context = await gatherBrainContext();
     const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace("{context}", context || "No data available yet.");
@@ -77,10 +77,30 @@ async function buildLLMResponse(message: string): Promise<string | null> {
       { role: "user", content: message },
     ]);
 
-    return reply || null;
-  } catch {
-    return null;
+    return { reply: reply || null, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown error";
+    return { reply: null, error: message };
   }
+}
+
+/**
+ * Translate a low-level chatCompletion error into something a user can act on.
+ * Mode-aware so we don't tell desktop users to "configure their OpenRouter key"
+ * (which they don't have — they go through the cloud proxy with a device token).
+ */
+function userFacingError(detail: string | null): string {
+  const isDesktop = process.env.WORKFLOW_MINER_MODE === "desktop";
+  if (detail?.includes("device token unavailable") || detail?.includes("proxy unreachable")) {
+    return "AI features need internet to reach the Workflow Miner cloud. Check your connection and try again.";
+  }
+  if (detail?.includes("quota exceeded") || detail?.includes("429")) {
+    return "You've used this month's free AI quota. It resets in a few days, or set OPEN_ROUTER_API_KEY in your env to bring your own key.";
+  }
+  if (isDesktop) {
+    return "AI features are temporarily unavailable. Check Settings → AI Features for quota status.";
+  }
+  return "AI features are temporarily unavailable. Check that OPEN_ROUTER_API_KEY is configured on the server.";
 }
 
 export async function POST(request: Request) {
@@ -95,8 +115,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const llmResponse = await buildLLMResponse(message);
-    const response = llmResponse ?? "I couldn't process your request right now. Please check that your OpenRouter API key is configured and try again.";
+    const { reply, error } = await buildLLMResponse(message);
+    const response = reply ?? userFacingError(error);
 
     return NextResponse.json({ response });
   } catch {

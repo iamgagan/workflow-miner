@@ -10,6 +10,7 @@ import {
   Sparkles,
   PlayCircle,
   Settings,
+  BrainCircuit,
   Menu,
   X,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { UserMenu } from "@/components/user-menu";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/brain", label: "Brain", icon: BrainCircuit },
   { href: "/patterns", label: "Patterns", icon: GitBranch },
   { href: "/connectors", label: "Connectors", icon: Plug },
   { href: "/skills", label: "Skills", icon: Sparkles },
