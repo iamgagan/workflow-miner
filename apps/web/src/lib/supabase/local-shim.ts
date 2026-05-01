@@ -57,8 +57,16 @@ type PGliteInstance = {
  * Kept in sync with `packages/engine/src/brain/schema.sql` plus the extra
  * tables the web app uses (`connector_tokens`, `activity_log`) that in hosted
  * mode live under Supabase Auth RLS.
+ *
+ * Includes the pgvector extension + `embedding vector(1536)` columns so the
+ * /brain agent's `match_timeline_entries` / `match_brain_pages` RPCs work
+ * locally. The HNSW indexes from the cloud schema are skipped here — they
+ * speed up cosine similarity over millions of rows but slow down small
+ * desktop datasets and aren't needed when the timeline has < 100k entries.
  */
 const BRAIN_SCHEMA_SQL = `
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS brain_pages (
   id SERIAL PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
@@ -68,6 +76,8 @@ CREATE TABLE IF NOT EXISTS brain_pages (
   timeline TEXT DEFAULT '',
   frontmatter JSONB DEFAULT '{}'::jsonb,
   content_hash TEXT,
+  embedding vector(1536),
+  last_enriched_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -79,6 +89,7 @@ CREATE TABLE IF NOT EXISTS brain_timeline (
   source TEXT NOT NULL,
   summary TEXT NOT NULL,
   detail TEXT DEFAULT '',
+  embedding vector(1536),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -178,14 +189,29 @@ async function bootDb(): Promise<PGliteInstance> {
   const dataDir = resolveDataDir();
   await fs.mkdir(dataDir, { recursive: true });
 
-  // Lazy import so PGlite stays out of non-desktop bundles
-  const { PGlite } = (await import("@electric-sql/pglite")) as {
-    PGlite: new (dataDir?: string) => PGliteInstance;
-  };
+  // Lazy import so PGlite stays out of non-desktop bundles. We also load the
+  // pgvector extension so the /brain agent's similarity RPCs work locally
+  // without needing a hosted Postgres. The extension is shipped in the
+  // PGlite wasm package and registered via the `extensions` constructor
+  // option introduced in 0.2.x.
+  const [{ PGlite }, vectorMod] = await Promise.all([
+    import("@electric-sql/pglite") as Promise<{
+      PGlite: new (
+        dataDir?: string,
+        options?: { extensions?: Record<string, unknown> },
+      ) => PGliteInstance;
+    }>,
+    import("@electric-sql/pglite/vector").catch(() => null),
+  ]);
+
+  const extensions: Record<string, unknown> | undefined =
+    vectorMod && "vector" in vectorMod
+      ? { vector: (vectorMod as { vector: unknown }).vector }
+      : undefined;
 
   let db: PGliteInstance;
   try {
-    db = new PGlite(dataDir);
+    db = new PGlite(dataDir, extensions ? { extensions } : undefined);
 
     // Wait for the WASM Postgres engine to finish booting before issuing any
     // SQL.  PGlite 0.2.x exposes `waitReady` as a Promise that resolves once
@@ -204,7 +230,7 @@ async function bootDb(): Promise<PGliteInstance> {
       console.warn(
         `[local-shim] PGlite WASM crashed with persistent storage (${dataDir}), retrying in-memory…`,
       );
-      const memDb = new PGlite();
+      const memDb = new PGlite(undefined, extensions ? { extensions } : undefined);
       if (memDb.waitReady) await memDb.waitReady;
       await memDb.exec(BRAIN_SCHEMA_SQL);
       return memDb;
@@ -238,6 +264,7 @@ type Filter =
   | { kind: "gte"; col: string; val: unknown }
   | { kind: "lt"; col: string; val: unknown }
   | { kind: "in"; col: string; vals: readonly unknown[] }
+  | { kind: "is"; col: string; val: null | boolean }
   | { kind: "or"; expr: string };
 
 interface QueryState {
@@ -425,6 +452,16 @@ class QueryBuilder<T = any> {
     return this;
   }
 
+  /**
+   * Supabase `.is(col, null|true|false)` — translates to `col IS NULL`,
+   * `col IS TRUE`, `col IS FALSE`. The only forms used in this codebase
+   * are null checks (e.g. dream-cycle backfill of timeline embeddings).
+   */
+  is(col: string, val: null | boolean): this {
+    this.state.filters.push({ kind: "is", col, val });
+    return this;
+  }
+
   or(expr: string): this {
     this.state.filters.push({ kind: "or", expr });
     return this;
@@ -538,6 +575,14 @@ class QueryBuilder<T = any> {
             placeholders.push(placeholder());
           }
           parts.push(`${columnExpr(f.col)} IN (${placeholders.join(", ")})`);
+          break;
+        }
+        case "is": {
+          // IS NULL / IS TRUE / IS FALSE — no parameter binding (these are
+          // SQL keywords, not values).
+          const literal =
+            f.val === null ? "NULL" : f.val === true ? "TRUE" : "FALSE";
+          parts.push(`${columnExpr(f.col)} IS ${literal}`);
           break;
         }
         case "or": {
@@ -794,7 +839,116 @@ const authStub: AuthStub = {
 
 export interface LocalShimClient {
   from<T = any>(table: string): QueryBuilder<T>;
+  rpc<T = any>(
+    name: string,
+    params?: Record<string, unknown>,
+  ): Promise<ShimResult<T[]>>;
   auth: AuthStub;
+}
+
+/**
+ * Format a numeric array as a pgvector text literal: `[0.1,0.2,...]`.
+ * Returns null for any non-array input so the caller can short-circuit.
+ */
+function formatVectorLiteral(value: unknown): string | null {
+  if (!Array.isArray(value)) return null;
+  // pgvector accepts the JSON-array text form when cast with ::vector.
+  // Numbers are stringified by JSON.stringify with full precision; bigint
+  // is rejected upstream so we only need to guard against non-numeric.
+  if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) {
+    return null;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Implement a known RPC by translating the params into raw SQL against the
+ * PGlite database. Only the RPCs the codebase actually calls are supported;
+ * everything else returns a "function does not exist" error matching the
+ * Postgres error code 42883 that the cloud Supabase would emit.
+ *
+ * Supported:
+ *   - match_timeline_entries(query_embedding, match_threshold, match_count)
+ *   - match_brain_pages(query_embedding, match_threshold, match_count)
+ *
+ * Both use cosine distance via `<=>`; the SQL mirrors the bodies in
+ * `packages/engine/src/brain/schema.sql`.
+ */
+async function executeRpc<T>(
+  db: Promise<PGliteInstance>,
+  name: string,
+  params: Record<string, unknown> | undefined,
+): Promise<ShimResult<T[]>> {
+  const args = params ?? {};
+
+  if (name === "match_timeline_entries" || name === "match_brain_pages") {
+    const literal = formatVectorLiteral(args.query_embedding);
+    if (!literal) {
+      return {
+        data: null,
+        error: {
+          message: `${name}: query_embedding must be a numeric array`,
+          code: "22023",
+        },
+      };
+    }
+
+    const threshold =
+      typeof args.match_threshold === "number" ? args.match_threshold : 0.7;
+    const count =
+      typeof args.match_count === "number" ? args.match_count : 10;
+
+    let sql: string;
+    if (name === "match_timeline_entries") {
+      sql = `
+        SELECT
+          bt.id,
+          bt.page_id,
+          bt.date,
+          bt.source,
+          bt.summary,
+          bt.detail,
+          1 - (bt.embedding <=> $1::vector) AS similarity
+        FROM brain_timeline bt
+        WHERE bt.embedding IS NOT NULL
+          AND 1 - (bt.embedding <=> $1::vector) > $2
+        ORDER BY bt.embedding <=> $1::vector ASC
+        LIMIT $3
+      `;
+    } else {
+      sql = `
+        SELECT
+          bp.id,
+          bp.slug,
+          bp.title,
+          bp.type,
+          bp.compiled_truth,
+          1 - (bp.embedding <=> $1::vector) AS similarity
+        FROM brain_pages bp
+        WHERE bp.embedding IS NOT NULL
+          AND 1 - (bp.embedding <=> $1::vector) > $2
+        ORDER BY bp.embedding <=> $1::vector ASC
+        LIMIT $3
+      `;
+    }
+
+    try {
+      const conn = await db;
+      const result = await conn.query<T>(sql, [literal, threshold, count]);
+      return { data: result.rows as T[], error: null };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { data: null, error: { message } };
+    }
+  }
+
+  return {
+    data: null,
+    error: {
+      message: `function ${name}() does not exist in local-shim`,
+      code: "42883",
+    },
+  };
 }
 
 /**
@@ -807,6 +961,9 @@ export function createLocalShimClient(): LocalShimClient {
   return {
     from<T = any>(table: string) {
       return new QueryBuilder<T>(table, db);
+    },
+    rpc<T = any>(name: string, params?: Record<string, unknown>) {
+      return executeRpc<T>(db, name, params);
     },
     auth: authStub,
   };

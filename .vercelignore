@@ -1,0 +1,25 @@
+# Vercel only deploys apps/web (Next.js) — anything else in the monorepo is
+# either built locally as part of the deploy (packages/engine) or unrelated
+# (apps/desktop, the Tauri shell). Excluding the desktop tree drops the
+# upload size from ~4GB (Rust release artifacts) to a few MB.
+
+# Tauri / desktop artifacts — not needed by the cloud build at all
+apps/desktop/
+
+# Build outputs that get regenerated on Vercel
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# OS / IDE noise
+.DS_Store
+.idea/
+.vscode/
+
+# Logs and local DBs
+*.log
+workflow-miner.db

@@ -3,25 +3,73 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import OpenAI from "openai";
 import { Octokit } from "@octokit/rest";
 import { renderPageToMarkdown, slugToFilePath, type BrainPageRow, type BrainLinkRow } from "./markdown";
+import { createLocalShimClient } from "@/lib/supabase/local-shim";
+import { getDeviceToken, proxyUrl } from "@/lib/device-token";
 import type { BrainClient as EngineBrainClient } from "@workflow-miner/engine";
 
 // Lazy clients — created on first use, not at module load. Lets `next build`
 // collect page data without env vars present and lets unit tests inject mocks.
+//
+// In desktop mode (WORKFLOW_MINER_MODE=desktop), the cloud Supabase env
+// vars don't exist — instead we route through the PGlite-backed local shim.
+// The shim implements the subset of the Supabase JS client these functions
+// actually call (.from, .rpc, .auth.getUser), so the Inngest functions and
+// the new desktop runners can share the same code paths without branching.
 let _supabase: SupabaseClient | null = null;
 function supa(): SupabaseClient {
   if (!_supabase) {
-    _supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    if (process.env.WORKFLOW_MINER_MODE === "desktop") {
+      _supabase = createLocalShimClient() as unknown as SupabaseClient;
+    } else {
+      _supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.SUPABASE_SERVICE_ROLE_KEY!
+      );
+    }
   }
   return _supabase;
 }
 
+/**
+ * LLM client factory, mode-aware. Both modes route through OpenRouter so
+ * we have one provider, one bill, one hard cap to monitor — OpenRouter
+ * sells the OpenAI catalog (`openai/text-embedding-3-small`,
+ * `openai/gpt-4o`, `openai/gpt-4o-mini`) at parity pricing alongside
+ * Anthropic, Google, etc. on a single rail.
+ *
+ * Cloud:    OpenAI client pointed at openrouter.ai with OPEN_ROUTER_API_KEY.
+ * Desktop:  OpenAI client pointed at the cloud LLM proxy
+ *           (https://workflow-miner.vercel.app/api/llm/openrouter),
+ *           authenticated with the per-install device token. The proxy
+ *           re-authenticates with the real OpenRouter key upstream and
+ *           tracks per-device quota in `desktop_devices`.
+ *
+ * Model names are OpenRouter-format (`<provider>/<model>`); see callers.
+ */
 let _openai: OpenAI | null = null;
-function oai(): OpenAI {
-  if (!_openai) {
-    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+async function oai(): Promise<OpenAI> {
+  if (_openai) return _openai;
+
+  if (process.env.WORKFLOW_MINER_MODE === "desktop") {
+    const tokenInfo = await getDeviceToken();
+    if (!tokenInfo) {
+      throw new Error(
+        "device token unavailable — proxy unreachable on first launch?",
+      );
+    }
+    _openai = new OpenAI({
+      apiKey: tokenInfo.token,
+      baseURL: proxyUrl("openrouter"),
+    });
+  } else {
+    _openai = new OpenAI({
+      apiKey: process.env.OPEN_ROUTER_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": "https://workflow-miner.vercel.app",
+        "X-Title": "Workflow Miner",
+      },
+    });
   }
   return _openai;
 }
@@ -29,8 +77,9 @@ function oai(): OpenAI {
 async function generateEmbedding(text: string) {
   if (!text) return null;
   try {
-    const response = await oai().embeddings.create({
-      model: "text-embedding-3-small",
+    const client = await oai();
+    const response = await client.embeddings.create({
+      model: "openai/text-embedding-3-small",
       input: text,
       encoding_format: "float",
     });
@@ -262,7 +311,7 @@ export const executePattern = inngest.createFunction(
   }
 );
 
-const ENRICH_MODEL = process.env.OPENAI_MODEL_ENRICH ?? "gpt-4o-mini";
+const ENRICH_MODEL = process.env.OPENAI_MODEL_ENRICH ?? "openai/gpt-4o-mini";
 
 export async function refreshCompiledTruth(page: {
   id: number;
@@ -299,7 +348,8 @@ ${evidence}
 Write a concise 2-3 sentence summary capturing what is currently true about this entity. No preamble. No bullet points.`;
 
   try {
-    const response = await oai().chat.completions.create({
+    const client = await oai();
+    const response = await client.chat.completions.create({
       model: ENRICH_MODEL,
       messages: [{ role: "user", content: prompt }],
       max_tokens: 200,
@@ -327,7 +377,8 @@ Text:
 ${text.slice(0, 4000)}`;
 
   try {
-    const response = await oai().chat.completions.create({
+    const client = await oai();
+    const response = await client.chat.completions.create({
       model: ENRICH_MODEL,
       messages: [{ role: "user", content: prompt }],
       max_tokens: 500,
@@ -374,6 +425,107 @@ async function upsertEntityAndLink(entity: ExtractedEntity, fromSlug: string) {
       },
       { onConflict: "from_slug,to_slug,link_type", ignoreDuplicates: true }
     );
+}
+
+/**
+ * Pure async runner for one Dream Cycle pass.
+ *
+ * Same logic as the Inngest function below, but without `step.run`/
+ * `step.sendEvent` durability — meant for inline invocation from
+ * `/api/dream/run` in desktop mode where there is no Inngest webhook
+ * receiver. Used by both desktop AND the Inngest function (the latter
+ * just wraps each step.run around a slice of this).
+ *
+ * Also backfills embeddings on `brain_timeline` rows that don't yet have
+ * one — local ingest writes timeline entries without embeddings, so
+ * without this backfill the /brain agent's similarity search would
+ * always return zero rows on a fresh desktop install.
+ */
+export async function runDreamCycle(options?: {
+  maxPages?: number;
+  maxTimelineEmbeddings?: number;
+}): Promise<{
+  pagesEnriched: number;
+  timelineEmbeddingsBackfilled: number;
+}> {
+  const maxPages = options?.maxPages ??
+    parseInt(process.env.DREAM_CYCLE_MAX_PAGES_PER_RUN ?? "500", 10);
+  const maxTimelineEmbeddings = options?.maxTimelineEmbeddings ?? 500;
+
+  // 1. Backfill timeline embeddings so the /brain agent has something to
+  //    similarity-search against. Only fires when an OpenAI key is set.
+  let timelineEmbeddingsBackfilled = 0;
+  if (process.env.OPENAI_API_KEY) {
+    const { data: stale } = await supa()
+      .from("brain_timeline")
+      .select("id, summary, detail")
+      .is("embedding", null)
+      .order("date", { ascending: false })
+      .limit(maxTimelineEmbeddings);
+
+    for (const row of (stale as Array<{ id: number; summary: string; detail: string | null }> | null) ?? []) {
+      const embedding = await generateEmbedding(`${row.summary} ${row.detail ?? ""}`);
+      if (!embedding) continue;
+      const { error } = await supa()
+        .from("brain_timeline")
+        .update({ embedding })
+        .eq("id", row.id);
+      if (!error) timelineEmbeddingsBackfilled++;
+    }
+  }
+
+  // 2. Refresh compiled_truth on stale pages and re-embed.
+  const { data: stalePages, error: stalePagesError } = await supa()
+    .from("brain_pages")
+    .select("id, slug, type, title, compiled_truth, timeline, updated_at, last_enriched_at")
+    .or("last_enriched_at.is.null,last_enriched_at.lt.updated_at")
+    .order("last_enriched_at", { ascending: true, nullsFirst: true })
+    .limit(maxPages);
+
+  if (stalePagesError) {
+    throw new Error(`find-stale-pages failed: ${stalePagesError.message}`);
+  }
+
+  for (const page of (stalePages ?? []) as Array<{
+    id: number;
+    slug: string;
+    type: string;
+    title: string;
+    compiled_truth: string | null;
+    timeline: string | null;
+    updated_at: string;
+    last_enriched_at: string | null;
+  }>) {
+    const newCompiledTruth = await refreshCompiledTruth(page);
+
+    if (page.type !== "person" && page.type !== "company" && page.type !== "project") {
+      const entities = await extractEntities(newCompiledTruth ?? page.title);
+      for (const entity of entities) {
+        if (entity.slug === page.slug) continue;
+        await upsertEntityAndLink(entity, page.slug);
+      }
+    }
+
+    const updates: Record<string, unknown> = {
+      last_enriched_at: new Date().toISOString(),
+    };
+
+    if (newCompiledTruth && newCompiledTruth !== page.compiled_truth) {
+      updates.compiled_truth = newCompiledTruth;
+      updates.embedding = await generateEmbedding(`${page.title} ${newCompiledTruth}`);
+    }
+
+    const { error } = await supa()
+      .from("brain_pages")
+      .update(updates)
+      .eq("id", page.id);
+    if (error) throw new Error(`update-page-${page.id} failed: ${error.message}`);
+  }
+
+  return {
+    pagesEnriched: stalePages?.length ?? 0,
+    timelineEmbeddingsBackfilled,
+  };
 }
 
 // Nightly LLM-enrichment pass. Walks every page touched since its last
@@ -443,7 +595,87 @@ export const dreamCycle = inngest.createFunction(
   }
 );
 
-// ─── Markdown export to GitHub ────────────────────────────────────────────
+// ─── Markdown export ──────────────────────────────────────────────────────
+//
+// Cloud mode: pushes markdown to a user-owned GitHub repo via Octokit.
+// Desktop mode: writes markdown to a local directory (default
+// ~/Documents/Workflow Miner/export, override with WORKFLOW_MINER_EXPORT_DIR).
+
+/**
+ * Resolve the desktop export directory. Mirrors local-shim's data-dir
+ * convention so users can find their export next to the brain database.
+ */
+function resolveExportDir(): string {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const path = require("node:path") as typeof import("node:path");
+  const os = require("node:os") as typeof import("node:os");
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  const override = process.env.WORKFLOW_MINER_EXPORT_DIR;
+  if (override) return override;
+
+  const platform = os.platform();
+  const home = os.homedir();
+  if (platform === "darwin" || platform === "win32") {
+    return path.join(home, "Documents", "Workflow Miner", "export");
+  }
+  return path.join(home, "workflow-miner-export");
+}
+
+/**
+ * Pure async runner for Markdown export. In desktop mode writes pages to
+ * the local filesystem. Used by `/api/export/run` directly when
+ * WORKFLOW_MINER_MODE=desktop, and by the desktop-mode dream-cycle chain.
+ */
+export async function runMarkdownExportToDisk(options?: {
+  outputDir?: string;
+}): Promise<{
+  outputDir: string;
+  exported: number;
+  skipped: number;
+}> {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const fs = require("node:fs/promises") as typeof import("node:fs/promises");
+  const path = require("node:path") as typeof import("node:path");
+  /* eslint-enable @typescript-eslint/no-require-imports */
+
+  const outputDir = options?.outputDir ?? resolveExportDir();
+  await fs.mkdir(outputDir, { recursive: true });
+
+  const pagesRes = await supa()
+    .from("brain_pages")
+    .select("id, slug, type, title, compiled_truth, timeline, frontmatter, created_at, updated_at");
+  if (pagesRes.error) {
+    throw new Error(`snapshot pages: ${pagesRes.error.message}`);
+  }
+
+  const linksRes = await supa()
+    .from("brain_links")
+    .select("from_slug, to_slug, link_type");
+  if (linksRes.error) {
+    throw new Error(`snapshot links: ${linksRes.error.message}`);
+  }
+
+  const pages = (pagesRes.data ?? []) as BrainPageRow[];
+  const links = (linksRes.data ?? []) as BrainLinkRow[];
+
+  let exported = 0;
+  let skipped = 0;
+  for (const page of pages) {
+    try {
+      const content = renderPageToMarkdown(page, links);
+      const relPath = slugToFilePath(page.type, page.slug);
+      const fullPath = path.join(outputDir, relPath);
+      await fs.mkdir(path.dirname(fullPath), { recursive: true });
+      await fs.writeFile(fullPath, content, "utf8");
+      exported++;
+    } catch (err) {
+      console.error(`export failed for page ${page.slug}:`, err);
+      skipped++;
+    }
+  }
+
+  return { outputDir, exported, skipped };
+}
 
 let _octokit: Octokit | null = null;
 function octo(): Octokit {

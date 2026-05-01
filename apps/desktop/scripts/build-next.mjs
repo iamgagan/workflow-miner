@@ -16,9 +16,53 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/**
+ * Env vars that MUST NOT be embedded in the distributed .app. These either
+ * grant direct billing access (LLM keys), bypass RLS (service role), or are
+ * personal credentials that have no place in a binary shipped to other users.
+ *
+ * Anything not on this list is copied through. OAuth client_id/secret pairs
+ * are intentionally NOT here — per RFC 8252 the desktop OAuth secret can be
+ * embedded because security comes from the loopback redirect + PKCE.
+ */
+const FORBIDDEN_ENV_KEYS = new Set([
+  "OPEN_ROUTER_API_KEY",
+  "OPENROUTER_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "APPLE_API_KEY",
+  "APPLE_API_ISSUER",
+  "APPLE_API_KEY_PATH",
+  "GITHUB_EXPORT_PAT",
+  "INNGEST_SIGNING_KEY",
+  "INNGEST_EVENT_KEY",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+]);
+
+/**
+ * Read .env-format text and strip lines whose key is in FORBIDDEN_ENV_KEYS.
+ * Returns { filtered: string, dropped: string[] }.
+ */
+function filterEnv(content) {
+  const dropped = [];
+  const lines = content.split(/\r?\n/);
+  const out = [];
+  for (const line of lines) {
+    const m = line.match(/^([A-Z_][A-Z0-9_]*)=/);
+    if (m && FORBIDDEN_ENV_KEYS.has(m[1])) {
+      dropped.push(m[1]);
+      continue;
+    }
+    out.push(line);
+  }
+  return { filtered: out.join("\n"), dropped };
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..", "..", "..");
@@ -85,11 +129,21 @@ if (existsSync(publicSrc)) {
 // runtime. These are needed by /api/connectors/google/exchange. Per RFC 8252
 // the desktop OAuth client_secret can be safely embedded in distributed
 // binaries because security comes from the loopback redirect + PKCE.
+//
+// Sensitive keys (LLM API keys, service role, personal Apple/GitHub creds)
+// are stripped here — see FORBIDDEN_ENV_KEYS at top of file. The desktop
+// reaches LLM features through the cloud /api/llm proxy with a per-install
+// device token instead, so it never needs the underlying provider keys.
 const envLocalSrc = resolve(webDir, ".env.local");
 if (existsSync(envLocalSrc)) {
   const envDest = resolve(resourcesDir, "apps", "web", ".env.production");
-  cpSync(envLocalSrc, envDest);
-  console.log(`[build-next] embedded ${envLocalSrc} → ${envDest}`);
+  const raw = readFileSync(envLocalSrc, "utf8");
+  const { filtered, dropped } = filterEnv(raw);
+  writeFileSync(envDest, filtered, { encoding: "utf8", mode: 0o644 });
+  console.log(
+    `[build-next] embedded ${envLocalSrc} → ${envDest}` +
+      (dropped.length > 0 ? ` (stripped: ${dropped.join(", ")})` : ""),
+  );
 } else {
   console.warn(
     "[build-next] WARN: apps/web/.env.local not found — desktop OAuth flow will fail with 'server_oauth_not_configured'. Run /tmp/wire-oauth.sh or copy .env.local into apps/web/ before building.",

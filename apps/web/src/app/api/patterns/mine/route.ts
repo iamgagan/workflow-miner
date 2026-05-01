@@ -6,6 +6,12 @@ import {
   type EvidenceEvent,
 } from "@/lib/pattern-labeler";
 import {
+  classifyEvents,
+  type ClassifiableEvent,
+  type ClassifiedEvent,
+} from "@/lib/event-classifier";
+import { deriveEventType } from "@/lib/event-type-regex";
+import {
   Sessionizer,
   PatternMiner,
   PatternScorer,
@@ -75,26 +81,59 @@ export async function POST() {
       );
     }
 
-    // 2. Convert timeline entries to EventRow-compatible format for Sessionizer
-    const eventRows: EventRow[] = timelineEntries.map((entry) => ({
-      event_id: entry.id,
-      source_system: entry.source ?? "unknown",
-      source_object_type: deriveEventType(entry.source, entry.summary),
-      source_object_id: entry.id,
-      actor_id: "default",
-      timestamp: entry.date ?? entry.created_at,
-      workspace_id: null,
-      conversation_id: null,
-      entity_refs: "[]",
-      event_type: deriveEventType(entry.source, entry.summary),
-      content_text: entry.summary ?? null,
-      metadata: "{}",
-      parent_event_id: null,
-      causal_links: "[]",
-      confidence: 1,
-      pii_redaction_state: "clean",
-      created_at: entry.created_at,
+    // 2a. Optional: LLM-classify each timeline entry's event type, actor, and
+    //     object reference. Gated by ENABLE_LLM_CLASSIFY=1 so the cheap regex
+    //     path (deriveEventType) remains the default. When the flag is on
+    //     and OPEN_ROUTER_API_KEY is set, classifyEvents() makes a batched
+    //     call (≈25 events per batch, claude-3.5-haiku) and we prefer its
+    //     output. Anything the LLM doesn't return — or any row whose returned
+    //     type isn't in the taxonomy — silently falls back to deriveEventType.
+    const llmEnabled =
+      process.env.ENABLE_LLM_CLASSIFY === "1" &&
+      !!process.env.OPEN_ROUTER_API_KEY;
+
+    const classifiable: ClassifiableEvent[] = timelineEntries.map((e) => ({
+      id: String(e.id),
+      summary: e.summary,
+      source: e.source,
     }));
+
+    const classifiedById: ReadonlyMap<string, ClassifiedEvent> = llmEnabled
+      ? await classifyEvents(classifiable)
+      : new Map();
+
+    // 2b. Convert timeline entries to EventRow-compatible format for Sessionizer.
+    //     Prefer LLM-derived type / actor / objectRef when available, otherwise
+    //     fall back to the regex deriveEventType + hardcoded "default" actor.
+    const eventRows: EventRow[] = timelineEntries.map((entry) => {
+      const classified = classifiedById.get(String(entry.id));
+      const eventType =
+        classified?.type ?? deriveEventType(entry.source, entry.summary);
+      const actorId = classified?.actor
+        ? actorIdFromName(classified.actor)
+        : "default";
+      const entityRefs = classified?.objectRef ? [classified.objectRef] : [];
+
+      return {
+        event_id: entry.id,
+        source_system: entry.source ?? "unknown",
+        source_object_type: eventType,
+        source_object_id: entry.id,
+        actor_id: actorId,
+        timestamp: entry.date ?? entry.created_at,
+        workspace_id: null,
+        conversation_id: null,
+        entity_refs: JSON.stringify(entityRefs),
+        event_type: eventType,
+        content_text: entry.summary ?? null,
+        metadata: "{}",
+        parent_event_id: null,
+        causal_links: "[]",
+        confidence: 1,
+        pii_redaction_state: "clean",
+        created_at: entry.created_at,
+      };
+    });
 
     // 3. Group events into sessions using Sessionizer (4-hour = 240 min gap)
     const sessionizer = new Sessionizer({ gapThresholdMinutes: 240 });
@@ -133,10 +172,15 @@ export async function POST() {
 
     // 5a. Entity-anchored sessionization: build a second set of sessions
     //     grouped by shared entity anchors (Linear ticket IDs, Slack channels,
-    //     person names). On busy days temporal grouping can create mega-sessions
-    //     that make PrefixSpan explode combinatorially; entity sessions give the
-    //     miner tighter, semantically-coherent windows to work with.
+    //     person names, plus any LLM-extracted objectRef when classifier is on).
+    //     On busy days temporal grouping can create mega-sessions that make
+    //     PrefixSpan explode combinatorially; entity sessions give the miner
+    //     tighter, semantically-coherent windows to work with.
     const entitySessionSequences = buildEntitySessions(timelineEntries, eventRows);
+
+    // Track how many rows the classifier successfully labelled so the debug
+    // payload can show LLM coverage at a glance.
+    const llmClassifiedCount = classifiedById.size;
 
     // Merge temporal + entity sessions before mining so PrefixSpan sees both
     // groupings. Duplicates are fine — support counting is additive.
@@ -435,6 +479,12 @@ export async function POST() {
           sessionCount: allSessionSequences.length,
           temporalSessionCount: sessionSequences.length,
           entitySessionCount: entitySessionSequences.length,
+          llmEnabled,
+          llmClassifiedCount,
+          llmCoverage:
+            timelineEntries.length > 0
+              ? llmClassifiedCount / timelineEntries.length
+              : 0,
         }
       : undefined;
 
@@ -453,202 +503,6 @@ export async function POST() {
   }
 }
 
-/**
- * Derive a semantic event type from a brain_timeline entry's source +
- * summary. The mining alphabet is what determines pattern quality: if the
- * alphabet is just `gmail`/`slack`/`linear`/`calendar` (the source names)
- * then PrefixSpan can only find boring patterns like `gmail → gmail`.
- * Mapping to verbs like `email_received` / `meeting_scheduled` /
- * `issue_created` lets the miner discover meaningful cross-tool sequences
- * such as `email_received → meeting_scheduled → issue_created`.
- *
- * Resolution order:
- *   1. Check the summary text for known intent keywords (verb + object).
- *      This is the dominant signal since real connector summaries are
- *      "Bug reported by Alice", "Meeting scheduled with Marcus", etc.
- *   2. Fall back to the source-aware default (e.g. `gmail` → `email_event`,
- *      `linear` → `issue_event`) so a summary-less entry still produces a
- *      meaningful type rather than collapsing onto a single bucket.
- *   3. Last-resort `activity` for anything else.
- */
-function deriveEventType(
-  source: string | null,
-  summary: string | null,
-): string {
-  const raw = (summary ?? "").trim();
-  const text = raw.toLowerCase();
-
-  // Step 0: Gmail thread structure signals. Real Gmail summaries are often
-  // email subject lines that start with "Re:", "Fwd:", or contain thread
-  // markers. These are strong structural signals that should produce
-  // distinct event types regardless of the topical content.
-  if (source?.toLowerCase() === "gmail" || /\bemail\b/.test(text)) {
-    // Forwarded emails — information sharing / escalation.
-    if (/^fwd:/i.test(raw) || /\bforwarded\b/.test(text))
-      return "email_forwarded";
-
-    // Reply threads — ongoing conversation.
-    if (/^re:/i.test(raw) || /\breply\b/.test(text) || /\breplied\b/.test(text))
-      return "email_replied";
-  }
-
-  // Step 1: keyword extraction. Specific verbs and concrete actions win
-  // over generic nouns so a single scenario produces a varied step
-  // sequence instead of collapsing onto one bucket. Examples:
-  //
-  //   "Bug report received from Sarah Chen"   -> bug_reported
-  //   "Bug severity discussed in #triage"     -> issue_triaged
-  //   "Bug ticket LIN-487 moved to In Progress" -> issue_updated
-  //   "Bug triage meeting with Sarah Chen"    -> meeting_scheduled
-  //
-  // Without this priority order, all four would match the generic "bug"
-  // keyword and the miner would surface degenerate `bug -> bug -> bug` runs.
-  if (text) {
-    // Step 1A: action verbs that always win, regardless of topical noise.
-    // These are "this event was a CREATE/POST/SEND/etc." signals.
-
-    // Created / opened — issue lifecycle start.
-    if (
-      /\b(created from|created with|created\b|opened|filed)\b/.test(text) &&
-      /\b(ticket|issue|task|story|alert)\b/.test(text)
-    )
-      return "issue_created";
-
-    // Moved / updated — issue lifecycle middle.
-    if (/\b(moved to|in progress|updated|reassigned)\b/.test(text))
-      return "issue_updated";
-
-    // Reply / acknowledgment / forward — email actions.
-    if (
-      /\b(reply sent|reply received|acknowledgment|acknowledg(e|ed) email|forwarded|follow-?up email)\b/.test(
-        text,
-      )
-    )
-      return "email_replied";
-
-    // Deploy / release / rollback.
-    if (/\b(deploy(ed|ment)?|rollback|merged|released|shipped|release notes?)\b/.test(text))
-      return "code_deployed";
-
-    // PR review / approve / reject / code review.
-    if (
-      /\b(pr (review|merge)|pull request|review requested|approved|rejected|review feedback|code review|lgtm)\b/.test(
-        text,
-      )
-    )
-      return "code_reviewed";
-
-    // Posted / flagged / mentioned in a channel — chat messages. We check
-    // this BEFORE the meeting topical check so a "thread posted about a
-    // standup" gets classified as a message, not a meeting.
-    if (/\b(posted in|flagged in|mentioned in|thread (posted|started)|dm sent)\b/.test(text))
-      return "message_posted";
-
-    // Step 1B: topic / setting nouns. Apply only when no action verb above
-    // matched, so a meeting that schedules a follow-up classifies as a
-    // meeting and a chat message ABOUT a meeting classifies as a message.
-
-    // Meeting / calendar entries — expanded to catch email meeting invites
-    // and common meeting-related subject patterns.
-    if (
-      /\b(meeting (held|scheduled|started|invite|notes|recap|minutes|cancelled|rescheduled)|1:?1|sync(ed)? up|call held|retrospective|standup|stand-up|kickoff|kick-off|huddle|check-?in meeting|office hours|all[- ]?hands|town[- ]?hall)\b/.test(
-        text,
-      )
-    )
-      return "meeting_scheduled";
-
-    // Invitation / calendar-style emails.
-    if (/\b(invit(e|ation|ed)|rsvp|calendar invite|agenda|you'?re invited)\b/.test(text))
-      return "meeting_scheduled";
-
-    // Triage / severity / assignment.
-    if (/\b(triag(e|ed)|severity|assigned to|assign(ed|ment))\b/.test(text))
-      return "issue_triaged";
-
-    // Escalation: P0/P1 or "escalated to".
-    if (/\b(escalat(ion|ed)|p0|p1|urgent|critical|blocker|blocked)\b/.test(text))
-      return "escalation_raised";
-
-    // Followup / action item / recap / summary / digest.
-    if (/\b(followup|follow-up|follow up|action item|next step|recap|summary|digest|notes shared|takeaways)\b/.test(text))
-      return "followup_assigned";
-
-    // Decision recorded.
-    if (/\b(decision|decide(d)?|outcome|chose|sign-?off|go\/no-go|approved)\b/.test(text))
-      return "decision_made";
-
-    // Notification / automated emails — common in Gmail.
-    if (/\b(notification|automated|no-?reply|noreply|alert|monitoring|ci\/cd|build (failed|passed|succeeded)|pipeline)\b/.test(text))
-      return "notification_received";
-
-    // Request / ask — someone asking for something via email.
-    if (/\b(request(ed|ing)?|please review|can you|could you|need your|feedback needed|input needed|awaiting)\b/.test(text))
-      return "request_received";
-
-    // Sharing / FYI — information broadcast.
-    if (/\b(fyi|heads[- ]?up|sharing|shared|for your (info|review|reference)|attached|see attached|update on)\b/.test(text))
-      return "info_shared";
-
-    // Customer / client / external communication.
-    if (/\b(customer|client|vendor|partner|external|prospect|lead|onboarding|renewal|contract|invoice|quote|proposal sent)\b/.test(text))
-      return "customer_interaction";
-
-    // Scheduling / availability.
-    if (/\b(schedule|availab(le|ility)|time slot|book(ed)?|when can|free at|calendar)\b/.test(text))
-      return "scheduling_request";
-
-    // Generic chat surface.
-    if (/\b(slack|channel|thread|dm)\b/.test(text)) return "message_posted";
-
-    // Email — sent / received (broadened).
-    if (/\b(email received|email sent|inbox|email from|email to|received from|sent to)\b/.test(text))
-      return "email_received";
-
-    // Generic bug / incident — last resort.
-    if (/\b(bug|incident|outage|alert|error|crash|exception|failure)\b/.test(text))
-      return "bug_reported";
-
-    // Doc / spec / design / wiki.
-    if (/\b(spec|doc(ument)?|design|proposal|wiki|confluence|readme|changelog)\b/.test(text))
-      return "doc_shared";
-
-    // Feature / product work.
-    if (/\b(feature|enhancement|improvement|roadmap|requirement|user story|epic)\b/.test(text))
-      return "feature_discussed";
-
-    // Approval / sign-off.
-    if (/\b(approv(e|ed|al)|sign[- ]?off|authorize|authoriz(e|ed))\b/.test(text))
-      return "approval_given";
-
-    // Onboarding / welcome.
-    if (/\b(welcome|onboard(ing)?|getting started|new (hire|member|employee))\b/.test(text))
-      return "onboarding_event";
-  }
-
-  // Step 2: source-aware fallback. For Gmail we try to differentiate
-  // new threads from replies based on structural cues in the raw summary,
-  // even when no keyword matched above.
-  if (source) {
-    switch (source.toLowerCase()) {
-      case "gmail":
-        // If we got here, no keyword matched. Distinguish new email vs.
-        // generic email based on length / structure heuristics.
-        // Short subjects (< 50 chars) with no "re:" are likely new threads.
-        if (raw.length > 0 && raw.length < 50) return "email_sent";
-        return "email_received";
-      case "calendar":
-        return "calendar_event";
-      case "slack":
-        return "message_event";
-      case "linear":
-        return "issue_event";
-      default:
-        return `${source.toLowerCase()}_event`;
-    }
-  }
-
-  return "activity";
-}
 
 /**
  * Walk the supporting sessions in order and collect, from the FIRST session
@@ -692,6 +546,20 @@ function collectEvidenceEventIds(
     }
   }
   return [];
+}
+
+/**
+ * Stable lower-kebab actor id derived from a free-text actor name. Used so
+ * that the LLM's "Sarah Chen" and "sarah chen" map to the same Sessionizer
+ * actor bucket. Falls back to "default" for empty/whitespace input.
+ */
+function actorIdFromName(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return slug || "default";
 }
 
 /**
@@ -774,6 +642,7 @@ function buildEntitySessions(
   // Map each anchor → list of event_ids that reference it.
   const anchorToEventIds = new Map<string, string[]>();
 
+  // Pull regex anchors off summaries (works without LLM).
   for (const entry of timelineEntries) {
     const anchors = extractEntityAnchors(entry.summary);
     for (const anchor of anchors) {
@@ -781,6 +650,30 @@ function buildEntitySessions(
         anchorToEventIds.set(anchor, []);
       }
       anchorToEventIds.get(anchor)!.push(entry.id);
+    }
+  }
+
+  // Pull LLM-extracted refs off the event rows' entity_refs JSON. Lets the
+  // miner pick up arbitrary refs ("PR #142", "Q4 launch") that the regex
+  // list doesn't know about. Refs are normalised to lowercase so the
+  // string compare matches the regex anchors.
+  for (const row of eventRows) {
+    let refs: unknown;
+    try {
+      refs = JSON.parse(row.entity_refs);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(refs)) continue;
+    for (const ref of refs) {
+      if (typeof ref !== "string") continue;
+      const normalised = ref.trim().toLowerCase();
+      if (!normalised) continue;
+      const key = `ref:${normalised}`;
+      if (!anchorToEventIds.has(key)) {
+        anchorToEventIds.set(key, []);
+      }
+      anchorToEventIds.get(key)!.push(row.event_id);
     }
   }
 

@@ -1,9 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { streamText, tool, stepCountIs, convertToModelMessages, type UIMessage } from "ai";
-import { openai } from "@ai-sdk/openai";
+import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
+import { getDeviceToken, proxyUrl } from "@/lib/device-token";
 
 export async function POST(req: Request) {
   const supabase = await createClient();
@@ -15,8 +16,37 @@ export async function POST(req: Request) {
 
   const { messages } = (await req.json()) as { messages: UIMessage[] };
 
+  // Both modes route through OpenRouter for a single bill / hard cap.
+  // Cloud:    direct OpenRouter call with OPEN_ROUTER_API_KEY.
+  // Desktop:  hits the cloud LLM proxy with the per-install device token;
+  //           the proxy re-auths to OpenRouter and decrements quota.
+  const isDesktop = process.env.WORKFLOW_MINER_MODE === "desktop";
+  let openai;
+  if (isDesktop) {
+    const tokenInfo = await getDeviceToken();
+    if (!tokenInfo) {
+      return NextResponse.json(
+        { error: "device token unavailable — proxy unreachable" },
+        { status: 503 },
+      );
+    }
+    openai = createOpenAI({
+      apiKey: tokenInfo.token,
+      baseURL: proxyUrl("openrouter"),
+    });
+  } else {
+    openai = createOpenAI({
+      apiKey: process.env.OPEN_ROUTER_API_KEY ?? "",
+      baseURL: "https://openrouter.ai/api/v1",
+      headers: {
+        "HTTP-Referer": "https://workflow-miner.vercel.app",
+        "X-Title": "Workflow Miner",
+      },
+    });
+  }
+
   const result = streamText({
-    model: openai("gpt-4o"),
+    model: openai("openai/gpt-4o"),
     system:
       "You are the Company Brain Agent. You have access to the company's entire knowledge graph, including Slack messages, Emails, Linear tickets, and Google Calendar events. Your job is to answer questions using ONLY the facts retrieved from the search tool. If you are asked to draft something, use the context. If you don't know the answer after searching, say you don't know.",
     messages: await convertToModelMessages(messages),
@@ -28,9 +58,19 @@ export async function POST(req: Request) {
         }),
         execute: async ({ query }) => {
           const { OpenAI } = await import("openai");
-          const oai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+          // Both modes route through OpenRouter (single provider rail);
+          // desktop adds the device-token + proxy hop on the way.
+          const oai = isDesktop
+            ? new OpenAI({
+                apiKey: (await getDeviceToken())!.token,
+                baseURL: proxyUrl("openrouter"),
+              })
+            : new OpenAI({
+                apiKey: process.env.OPEN_ROUTER_API_KEY,
+                baseURL: "https://openrouter.ai/api/v1",
+              });
           const response = await oai.embeddings.create({
-            model: "text-embedding-3-small",
+            model: "openai/text-embedding-3-small",
             input: query,
             encoding_format: "float",
           });

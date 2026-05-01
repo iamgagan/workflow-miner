@@ -20,6 +20,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 DESKTOP_DIR="$REPO_ROOT/apps/desktop"
 
+# rustup installs cargo to ~/.cargo/bin, but non-login shells (e.g. when this
+# script is invoked by automation) don't source the user's rc files where that
+# directory is added to PATH. Tauri then fails with "failed to run command
+# cargo metadata" and silently leaves a stale .app from a previous build. Add
+# the directory explicitly so the build is always reproducible.
+if [ -d "$HOME/.cargo/bin" ]; then
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
 echo "==> Workflow Miner: signed + notarized release build"
 
 # ── 1. Sanity-check signing identity ────────────────────────────────────
@@ -114,16 +123,60 @@ codesign --force --options runtime --timestamp \
 codesign --verify --strict --verbose=2 "$APP" 2>&1 | tail -3
 codesign --display --entitlements - "$APP/Contents/MacOS/node" 2>&1 | grep -E "allow-jit" | head -1 || echo "  WARN: node missing allow-jit entitlement"
 
-# ── 6. Submit to Apple notary, wait for verdict, staple the ticket ──────
+# ── 6. Submit to Apple notary, poll for verdict, staple the ticket ──────
+#
+# We deliberately avoid `notarytool submit --wait` here — that flag has been
+# observed to bus-error (SIGBUS / "Bus error: 10") on macOS 15 Sequoia after
+# the upload completes, leaving the submission in flight at Apple but
+# crashing the script before stapling. Splitting submit + poll into separate
+# invocations sidesteps the crash entirely.
 echo "==> Submitting to Apple notary…"
 ZIP=$(mktemp -t wm-notarize).zip
 ditto -c -k --keepParent "$APP" "$ZIP"
 
-xcrun notarytool submit "$ZIP" \
+SUBMIT_OUT=$(xcrun notarytool submit "$ZIP" \
   --key "$APPLE_API_KEY_PATH" \
   --key-id "$APPLE_API_KEY" \
   --issuer "$APPLE_API_ISSUER" \
-  --wait --timeout 25m
+  --no-wait 2>&1)
+echo "$SUBMIT_OUT"
+SUBMISSION_ID=$(echo "$SUBMIT_OUT" | awk '/^ *id:/ {print $2; exit}')
+if [ -z "$SUBMISSION_ID" ]; then
+  echo "ERROR: failed to extract submission id from notarytool output"
+  exit 1
+fi
+echo "  → submission id: $SUBMISSION_ID"
+
+echo "==> Polling Apple notary for verdict (up to 25 minutes)…"
+DEADLINE=$(( $(date +%s) + 25 * 60 ))
+while :; do
+  if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+    echo "ERROR: notarization timed out after 25 minutes (id $SUBMISSION_ID)"
+    exit 1
+  fi
+  NOTARY_STATUS=$(xcrun notarytool info "$SUBMISSION_ID" \
+    --key "$APPLE_API_KEY_PATH" \
+    --key-id "$APPLE_API_KEY" \
+    --issuer "$APPLE_API_ISSUER" 2>&1 | awk '/^ *status:/ {print $2; exit}')
+  case "$NOTARY_STATUS" in
+    Accepted)
+      echo "  ✓ Accepted"
+      break
+      ;;
+    Invalid|Rejected)
+      echo "ERROR: notarization $NOTARY_STATUS — fetching log"
+      xcrun notarytool log "$SUBMISSION_ID" \
+        --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
+        --issuer "$APPLE_API_ISSUER" 2>&1 | head -200
+      exit 1
+      ;;
+    *)
+      printf "."
+      sleep 30
+      ;;
+  esac
+done
+echo
 
 echo "==> Stapling notarization ticket onto the .app…"
 xcrun stapler staple "$APP"
