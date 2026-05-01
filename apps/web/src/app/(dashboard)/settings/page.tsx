@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, Clock, Settings, Unplug, Trash2, Sparkles, Github, Key } from "lucide-react";
+import { AlertTriangle, Clock, Settings, Unplug, Trash2, Sparkles, Key, Cpu, FolderOpen } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -15,6 +15,12 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { NotificationPermission } from "@/components/notification-permission";
 
+interface QuotaStatus {
+  monthly_quota_tokens: number;
+  used_this_period: number;
+  period_resets_in_days: number;
+}
+
 export default function SettingsPage() {
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
   const [quietStart, setQuietStart] = useState("22:00");
@@ -23,19 +29,71 @@ export default function SettingsPage() {
   const [wiping, setWiping] = useState(false);
   const [dreamStatus, setDreamStatus] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [quota, setQuota] = useState<QuotaStatus | null>(null);
+  const [quotaError, setQuotaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch("/api/devices/status");
+        if (!res.ok) {
+          // 401 = cloud mode (no device token, expected); 503 = first-launch
+          // proxy reachability issue — surface only the latter.
+          const data = await res.json().catch(() => ({}));
+          if (res.status === 503 && !cancelled) {
+            setQuotaError(data.hint ?? data.error ?? "AI features unreachable");
+          }
+          return;
+        }
+        const data = (await res.json()) as QuotaStatus;
+        if (!cancelled) setQuota(data);
+      } catch (err) {
+        if (!cancelled) {
+          setQuotaError(err instanceof Error ? err.message : "fetch failed");
+        }
+      }
+    }
+    load();
+    const id = setInterval(load, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   async function runDreamCycle() {
-    setDreamStatus("Dispatching…");
+    setDreamStatus("Running…");
     const res = await fetch("/api/dream/run", { method: "POST" });
     const data = await res.json();
-    setDreamStatus(res.ok ? `Dispatched (event ${data.eventId})` : `Error: ${data.error}`);
+    if (!res.ok) {
+      setDreamStatus(`Error: ${data.error}`);
+      return;
+    }
+    if (data.mode === "desktop") {
+      setDreamStatus(
+        `Done. Enriched ${data.pagesEnriched} pages, backfilled ${data.timelineEmbeddingsBackfilled} timeline embeddings.`,
+      );
+    } else {
+      setDreamStatus(`Dispatched (event ${data.eventId})`);
+    }
   }
 
   async function runExport() {
-    setExportStatus("Dispatching…");
+    setExportStatus("Running…");
     const res = await fetch("/api/export/run", { method: "POST" });
     const data = await res.json();
-    setExportStatus(res.ok ? `Dispatched (event ${data.eventId})` : `Error: ${data.error}`);
+    if (!res.ok) {
+      setExportStatus(`Error: ${data.error}`);
+      return;
+    }
+    if (data.mode === "desktop") {
+      setExportStatus(
+        `Exported ${data.exported} pages → ${data.outputDir}${data.skipped > 0 ? ` (${data.skipped} skipped)` : ""}`,
+      );
+    } else {
+      setExportStatus(`Dispatched (event ${data.eventId})`);
+    }
   }
 
   const handleDisconnectAll = async () => {
@@ -159,6 +217,63 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      {(quota || quotaError) && (
+        <Card className="shadow-warm-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Cpu className="h-5 w-5 text-primary" />
+              AI Features
+            </CardTitle>
+            <CardDescription>
+              Pattern naming, classification, and the Company Brain chat use a shared monthly quota
+              that resets every 30 days. No setup required — your install is registered automatically.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {quota ? (
+              <>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm">
+                    <span className="font-mono">{quota.used_this_period.toLocaleString()}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      / {quota.monthly_quota_tokens.toLocaleString()} tokens
+                    </span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Resets in {quota.period_resets_in_days} day{quota.period_resets_in_days === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className={
+                      "h-full transition-all " +
+                      (quota.used_this_period / quota.monthly_quota_tokens > 0.9
+                        ? "bg-destructive"
+                        : quota.used_this_period / quota.monthly_quota_tokens > 0.7
+                          ? "bg-yellow-500"
+                          : "bg-primary")
+                    }
+                    style={{
+                      width: `${Math.min(100, (quota.used_this_period / quota.monthly_quota_tokens) * 100)}%`,
+                    }}
+                  />
+                </div>
+                {quota.used_this_period / quota.monthly_quota_tokens > 0.9 ? (
+                  <p className="text-xs text-destructive">
+                    You&rsquo;re close to the monthly cap. AI features will pause until the period resets.
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-xs font-mono text-muted-foreground">
+                {quotaError ?? "loading…"}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="shadow-warm-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -166,8 +281,9 @@ export default function SettingsPage() {
             Dream Cycle
           </CardTitle>
           <CardDescription>
-            Manually trigger the LLM enrichment pass (entity extraction + compiled-truth refresh).
-            Normally runs automatically on a cron.
+            Manually trigger the LLM enrichment pass — refreshes compiled summaries on touched
+            pages, extracts entities, and backfills timeline embeddings so the Brain chat has
+            something to search.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -181,13 +297,15 @@ export default function SettingsPage() {
       <Card className="shadow-warm-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Github className="h-5 w-5 text-primary" />
+            <FolderOpen className="h-5 w-5 text-primary" />
             Markdown export
           </CardTitle>
           <CardDescription>
-            Manually push a markdown mirror of the brain to your configured GitHub repo. Requires{" "}
-            <code className="text-xs">GITHUB_EXPORT_PAT</code> and{" "}
-            <code className="text-xs">GITHUB_EXPORT_REPO</code> env vars.
+            Snapshot the brain to disk as gbrain-format markdown. On desktop, files land in{" "}
+            <code className="text-xs">~/Documents/Workflow Miner/export/</code>. On the cloud
+            deployment, this pushes to the GitHub repo configured by{" "}
+            <code className="text-xs">GITHUB_EXPORT_PAT</code> +{" "}
+            <code className="text-xs">GITHUB_EXPORT_REPO</code>.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">

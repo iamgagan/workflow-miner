@@ -9,6 +9,7 @@ import {
   Sparkles,
   PlayCircle,
   Settings,
+  BrainCircuit,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/brain", label: "Brain", icon: BrainCircuit },
   { href: "/patterns", label: "Patterns", icon: GitBranch },
   { href: "/connectors", label: "Connectors", icon: Plug },
   { href: "/skills", label: "Skills", icon: Sparkles },
