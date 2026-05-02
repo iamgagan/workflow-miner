@@ -46,7 +46,13 @@ export async function POST(req: Request) {
   }
 
   const result = streamText({
-    model: openai("openai/gpt-4o"),
+    // openai.chat() forces the older /v1/chat/completions endpoint instead
+    // of the v2 default /v1/responses. OpenRouter doesn't implement the
+    // Responses API, so multi-step tool flows fail mid-stream with
+    // "Invalid Responses API request" once the agent tries to send the
+    // tool result back. Single-turn replies happened to work because they
+    // never needed continuation.
+    model: openai.chat("openai/gpt-4o"),
     system: [
       "You are the Company Brain Agent. You can search the user's knowledge graph (Slack, Emails, Linear tickets, Calendar) via the searchCompanyKnowledge tool, list detected workflow patterns via getOrganizationPatterns, and trigger workflows via triggerWorkflow.",
       "",
@@ -81,9 +87,13 @@ export async function POST(req: Request) {
           });
           const embedding = response.data[0].embedding;
 
+          // 0.7 was too strict for small desktop datasets — text-embedding-3-
+          // small typically scores 0.4-0.55 for loose semantic matches against
+          // email subject lines / Slack snippets. Lower threshold returns
+          // more candidates and lets the agent decide what's relevant.
           const { data, error } = await supabase.rpc("match_timeline_entries", {
             query_embedding: embedding,
-            match_threshold: 0.7,
+            match_threshold: 0.4,
             match_count: 10,
           });
 
