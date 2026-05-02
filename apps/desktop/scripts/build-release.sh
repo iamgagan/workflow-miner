@@ -78,6 +78,41 @@ if [ ! -d "$APP" ]; then
   exit 1
 fi
 
+# ── 4b. Replace Tauri's mangled `resources/next` tree with a fresh
+#    symlink-preserving copy from the source.
+#
+#    Tauri's resource bundler walks `../resources/next` recursively but
+#    selectively drops nested `node_modules` directories AND breaks
+#    relative symlinks deeper than one level. The Next.js standalone
+#    build relies on the pnpm-style `.pnpm/<pkg>/node_modules/` sibling
+#    structure (next finds styled-jsx / react / react-dom / sharp / etc.
+#    as siblings inside its own .pnpm dir). Without those symlinks,
+#    `require('styled-jsx/package.json')` fails when next.js boots and
+#    the sidecar dies before opening its TCP port.
+#
+#    Validated symptom (alpha.5, alpha.6 first attempt): app shows
+#    splash forever, no node process ever spawns, lsof shows no
+#    listener. Manual sidecar test reproduces with "Cannot find module
+#    'styled-jsx'" or 'next'.
+#
+#    Fix: blow away Tauri's copy of `resources/next` and replace it with
+#    `cp -RP` (preserve all symlinks, both relative and absolute) from
+#    the source tree. This must run AFTER tauri build (so the .app
+#    bundle exists) and BEFORE deep-signing (so the new files inherit
+#    the bundle signature).
+RESOURCES_SRC="$REPO_ROOT/apps/desktop/resources/next"
+RESOURCES_DST="$APP/Contents/Resources/_up_/resources/next"
+if [ -d "$RESOURCES_SRC" ] && [ -d "$RESOURCES_DST" ]; then
+  echo "==> Replacing Tauri's resources/next with symlink-preserving copy…"
+  rm -rf "$RESOURCES_DST"
+  cp -RP "$RESOURCES_SRC" "$RESOURCES_DST"
+  SYMLINK_COUNT=$(find "$RESOURCES_DST" -type l | wc -l | tr -d ' ')
+  NM_COUNT=$(find "$RESOURCES_DST" -name "node_modules" -type d | wc -l | tr -d ' ')
+  echo "  ✓ replaced ($SYMLINK_COUNT symlinks, $NM_COUNT node_modules dirs)"
+else
+  echo "==> resources/next missing in source or .app — skipping replace"
+fi
+
 # ── 5. Deep-sign every nested Mach-O binary inside the .app. Tauri's
 #    signing only covers Contents/MacOS/* — it doesn't recurse into the
 #    Next.js resources tree where sharp/esbuild/libvips live. Apple
