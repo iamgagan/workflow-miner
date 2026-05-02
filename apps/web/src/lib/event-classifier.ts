@@ -99,7 +99,13 @@ export async function classifyEvents(
 ): Promise<Map<string, ClassifiedEvent>> {
   const result = new Map<string, ClassifiedEvent>();
 
-  if (!process.env.OPEN_ROUTER_API_KEY || events.length === 0) {
+  // No early-bail on OPEN_ROUTER_API_KEY: in desktop mode that env var is
+  // stripped from the bundled .env.production. chatCompletion() (used by
+  // classifyBatch below) is mode-aware and routes through the cloud proxy
+  // with a per-install device token. If the upstream call fails for any
+  // reason, classifyBatch() returns [] and the caller falls back to the
+  // regex deriveEventType per row.
+  if (events.length === 0) {
     return result;
   }
 

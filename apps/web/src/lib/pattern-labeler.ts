@@ -134,13 +134,12 @@ export async function labelPatterns(
 ): Promise<Map<string, PatternLabel>> {
   const result = new Map<string, PatternLabel>();
 
-  // If there's no API key configured, skip LLM entirely.
-  if (!process.env.OPEN_ROUTER_API_KEY) {
-    for (const p of patterns) {
-      result.set(p.id, { name: p.name, description: "" });
-    }
-    return result;
-  }
+  // No early-bail on OPEN_ROUTER_API_KEY: in desktop mode that env var is
+  // stripped from the bundled .env.production (the desktop reaches LLM
+  // features through the cloud /api/llm proxy with a per-install device
+  // token). chatCompletion() handles both cloud and desktop modes; if the
+  // call fails for any reason, labelOne() catches and the per-pattern
+  // fallback below fills in the mechanical name + empty description.
 
   const CONCURRENCY = 3;
 
