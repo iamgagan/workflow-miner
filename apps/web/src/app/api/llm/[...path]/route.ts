@@ -127,8 +127,25 @@ export async function POST(req: NextRequest, context: RouteContext): Promise<Res
   }
   const upstreamUrl = `${provider.baseUrl}/${path.slice(1).join("/")}`;
 
-  // ── 3. Forward the request body verbatim ─────────────────────────────
-  const requestBody = await req.text();
+  // ── 3. Forward the request body, injecting stream_options for streaming.
+  //
+  // OpenAI/OpenRouter only include `usage.total_tokens` in the FINAL SSE
+  // chunk when `stream_options: { include_usage: true }` is present in the
+  // request. The Vercel AI SDK's streamText doesn't send that flag by
+  // default, so without injection the proxy can't see token counts on
+  // streaming chats and quota tracking silently under-counts.
+  const rawBody = await req.text();
+  let requestBody = rawBody;
+  try {
+    const parsed = JSON.parse(rawBody) as Record<string, unknown>;
+    if (parsed.stream === true) {
+      const existing = (parsed.stream_options as Record<string, unknown> | undefined) ?? {};
+      parsed.stream_options = { ...existing, include_usage: true };
+      requestBody = JSON.stringify(parsed);
+    }
+  } catch {
+    // Body wasn't JSON — pass through verbatim, no injection possible.
+  }
 
   let upstream: Response;
   try {

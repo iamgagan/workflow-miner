@@ -23,8 +23,10 @@ export default function BrainPage() {
   }
 
   return (
-    <div className="flex flex-col h-screen max-w-4xl mx-auto p-4 bg-background">
-      <header className="mb-6 pb-4 border-b flex items-center justify-between">
+    // Negative margins cancel the (dashboard) shell's main padding so the
+    // chat fills the full content area below the top nav. h-[calc(100vh-4rem)]
+    // keeps the chat scrollable area sized to the viewport minus the 64px nav.
+    <div className="flex flex-col h-[calc(100vh-4rem)] -m-4 md:-m-6 lg:-m-8 max-w-4xl mx-auto p-4 bg-background w-full"><header className="mb-6 pb-4 border-b flex items-center justify-between">
         <div className="flex items-center gap-2 text-primary">
           <BrainCircuit className="w-8 h-8" />
           <h1 className="text-2xl font-bold tracking-tight">Company Brain</h1>
