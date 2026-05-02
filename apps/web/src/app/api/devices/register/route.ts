@@ -73,10 +73,18 @@ export async function POST(req: Request): Promise<Response> {
   const token = randomBytes(32).toString("hex");
   const tokenHash = createHash("sha256").update(token).digest("hex");
 
+  // Per-device alpha quota. Empirical sizing from alpha.9 install: a
+  // single fresh user did initial Dream Cycle (~50k) + re-mine with
+  // labeling (~44k) and got within 200 tokens of the original 100k cap.
+  // 250k gives ~3 such cycles + plenty of /brain chat headroom over a
+  // 30-day window. Cost ceiling on the OpenRouter dashboard is the
+  // ultimate floor — a single runaway user can't cost us more than $10.
+  const QUOTA = 250000;
+
   const insert = await supa.from("desktop_devices").insert({
     device_uuid: body.device_uuid,
     token_hash: tokenHash,
-    monthly_quota_tokens: 100000,
+    monthly_quota_tokens: QUOTA,
   });
 
   if (insert.error) {
@@ -88,7 +96,7 @@ export async function POST(req: Request): Promise<Response> {
 
   return NextResponse.json({
     token,
-    monthly_quota_tokens: 100000,
+    monthly_quota_tokens: QUOTA,
     period_resets_in_days: 30,
   });
 }

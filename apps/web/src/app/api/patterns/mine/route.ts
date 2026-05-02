@@ -345,13 +345,56 @@ export async function POST() {
       scoredById.set(scored.patternId, scored);
     }
 
-    // 5c. LLM-assisted pattern labeling: ask OpenRouter to generate
-    //     human-readable names ("Bug Report to Triage Escalation") and
-    //     one-sentence descriptions for each mined pattern. Fails
-    //     gracefully if OPEN_ROUTER_API_KEY is not set — the pattern
-    //     keeps its mechanically-generated name.
+    // 5c. LLM-assisted pattern labeling — cached.
+    //
+    // Without caching, every re-mine spends ~28k tokens (50 patterns × ~550
+    // tokens each — the labeler builds a prompt with up-to-10 evidence events
+    // per pattern and Claude Haiku replies with a name+description). Most of
+    // that is wasted on patterns whose step sequence (and therefore mechanical
+    // name) hasn't changed since the last run.
+    //
+    // Cache strategy: read existing workflow brain_pages by slug, lift the
+    // cached (title, llmDescription) for any whose slug we'd upsert, and only
+    // ask labelPatterns to produce labels for the misses.
+    const slugsToUpsert = patterns.map((p) => `workflows/${slugify(p.name)}`);
+    const { data: existingPages } = await supabase
+      .from("brain_pages")
+      .select("slug, title, frontmatter")
+      .eq("type", "workflow")
+      .in("slug", slugsToUpsert);
+
+    type CachedLabel = { name: string; description: string };
+    const cachedLabelBySlug = new Map<string, CachedLabel>();
+    for (const page of (existingPages ?? []) as Array<{
+      slug: string;
+      title: string | null;
+      frontmatter: Record<string, unknown> | null;
+    }>) {
+      const fm = page.frontmatter ?? {};
+      const desc = typeof fm.llmDescription === "string" ? fm.llmDescription : "";
+      // Only treat as cached if the page already has BOTH a non-empty
+      // LLM-derived description and a title that differs from the raw
+      // mechanical name. Otherwise fall through and re-label.
+      const rawName = typeof fm.rawPatternName === "string" ? fm.rawPatternName : "";
+      if (page.title && desc && page.title !== rawName) {
+        cachedLabelBySlug.set(page.slug, { name: page.title, description: desc });
+      }
+    }
+
     const evidenceMap: EvidenceMap = new Map();
+    const patternsToLabel: typeof patterns = [];
+    const llmLabels = new Map<string, { name: string; description: string }>();
+
     for (const pattern of patterns) {
+      const slug = `workflows/${slugify(pattern.name)}`;
+      const cached = cachedLabelBySlug.get(slug);
+      if (cached) {
+        // Reuse the previous LLM label — no upstream call.
+        llmLabels.set(pattern.id, cached);
+        continue;
+      }
+
+      // Build evidence + queue this one for the LLM.
       const eids = collectEvidenceEventIds(
         pattern.steps.map((s) => s.eventType),
         pattern.exampleSessions,
@@ -366,16 +409,23 @@ export async function POST() {
           timestamp: e.timestamp,
         }));
       evidenceMap.set(pattern.id, evidenceEvents);
+      patternsToLabel.push(pattern);
     }
-    const llmLabels = await labelPatterns(
-      patterns.map((p) => ({
-        id: p.id,
-        name: p.name,
-        steps: p.steps,
-        compositeScore: scoredById.get(p.id)?.compositeScore ?? 0,
-      })),
-      evidenceMap,
-    );
+
+    if (patternsToLabel.length > 0) {
+      const fresh = await labelPatterns(
+        patternsToLabel.map((p) => ({
+          id: p.id,
+          name: p.name,
+          steps: p.steps,
+          compositeScore: scoredById.get(p.id)?.compositeScore ?? 0,
+        })),
+        evidenceMap,
+      );
+      for (const [id, label] of fresh) {
+        llmLabels.set(id, label);
+      }
+    }
 
     // 6. Write/update brain_pages entries for each pattern. We also resolve
     //    a small set of "evidence event IDs" for each pattern: the actual
