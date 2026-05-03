@@ -453,9 +453,16 @@ export async function runDreamCycle(options?: {
   const maxTimelineEmbeddings = options?.maxTimelineEmbeddings ?? 500;
 
   // 1. Backfill timeline embeddings so the /brain agent has something to
-  //    similarity-search against. Only fires when an OpenAI key is set.
+  //    similarity-search against. No env-var guard — generateEmbedding
+  //    calls oai() which is mode-aware (cloud uses OPEN_ROUTER_API_KEY,
+  //    desktop routes through the cloud proxy with the device token).
+  //    The desktop bundle strips OPENAI_API_KEY by design, so the
+  //    previous `if (process.env.OPENAI_API_KEY)` gate silently skipped
+  //    the entire backfill on desktop and left /brain search returning
+  //    empty results forever after sync. (Same shape as the bug fixed
+  //    in alpha.9 for pattern-labeler / event-classifier.)
   let timelineEmbeddingsBackfilled = 0;
-  if (process.env.OPENAI_API_KEY) {
+  {
     const { data: stale } = await supa()
       .from("brain_timeline")
       .select("id, summary, detail")
