@@ -179,10 +179,43 @@ const WASM_CRASH_PATTERNS = [
   "Aborted()",
   "RuntimeError: unreachable",
   "RuntimeError: memory access out of bounds",
+  // PGlite throws an ExitStatus object when the WASM postmaster aborts
+  // mid-query (e.g. on CHECK constraint violations the engine's exception
+  // path can't unwind cleanly). Treating this as a crash tears the
+  // singleton down and re-inits cleanly.
+  "Program terminated with exit(",
+  "ExitStatus",
 ];
 
 function isWasmCrash(message: string): boolean {
   return WASM_CRASH_PATTERNS.some((p) => message.includes(p));
+}
+
+/**
+ * Pull a human-readable message out of any thrown value. PGlite throws
+ * objects (ExitStatus, postgres errors with severity/code/detail/hint
+ * fields) that are NOT JS Error instances — the previous
+ * `err instanceof Error ? err.message : String(err)` pattern lost those
+ * to the literal "[object Object]" string. This helper preserves the
+ * PostgreSQL message + code + detail when present, so callers see
+ * actionable error text instead of a placeholder.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const obj = err as Record<string, unknown>;
+    const parts: string[] = [];
+    if (typeof obj.message === "string") parts.push(obj.message);
+    if (typeof obj.code === "string") parts.push(`(code ${obj.code})`);
+    if (typeof obj.detail === "string") parts.push(`detail: ${obj.detail}`);
+    if (typeof obj.hint === "string") parts.push(`hint: ${obj.hint}`);
+    if (parts.length > 0) return parts.join(" ");
+    if (typeof obj.name === "string" && typeof obj.status !== "undefined") {
+      return `${obj.name}(status=${String(obj.status)})`;
+    }
+    try { return JSON.stringify(err); } catch { /* fall through */ }
+  }
+  return String(err);
 }
 
 async function bootDb(): Promise<PGliteInstance> {
@@ -223,7 +256,7 @@ async function bootDb(): Promise<PGliteInstance> {
     await db.exec(BRAIN_SCHEMA_SQL);
     return db;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
     // If the WASM module crashed with a persistent-storage database, fall
     // back to an ephemeral in-memory instance so the app remains usable.
     if (isWasmCrash(message)) {
@@ -526,7 +559,7 @@ class QueryBuilder<T = any> {
           return await this.executeUpdate<U>(db);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeError(err);
 
       // If the WASM module crashed, discard the dead singleton and retry
       // once with a freshly initialised PGlite instance.
@@ -937,7 +970,7 @@ async function executeRpc<T>(
       const result = await conn.query<T>(sql, [literal, threshold, count]);
       return { data: result.rows as T[], error: null };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeError(err);
       return { data: null, error: { message } };
     }
   }
