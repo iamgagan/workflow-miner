@@ -64,9 +64,22 @@ type PGliteInstance = {
  * speed up cosine similarity over millions of rows but slow down small
  * desktop datasets and aren't needed when the timeline has < 100k entries.
  */
-const BRAIN_SCHEMA_SQL = `
-CREATE EXTENSION IF NOT EXISTS vector;
-
+/**
+ * Core schema — does NOT depend on the vector extension. This means
+ * connector OAuth, sync, ingest, pattern mining, and markdown export all
+ * keep working even if pgvector fails to load. Embedding columns are
+ * added by SCHEMA_VECTOR below in a try/catch so a vector-extension
+ * failure degrades the brain similarity search but doesn't take down the
+ * rest of the app.
+ *
+ * Caught by alpha.12 user report: a corrupt persistent PGlite directory
+ * caused open to fail with `ExitStatus exit(1)`, the in-memory fallback
+ * also failed (vector load went sideways once the original WASM context
+ * crashed), and connector OAuth surfaced "extension vector is not
+ * available" — even though connector_tokens has no vector columns.
+ * Splitting the schema isolates the failure mode.
+ */
+const SCHEMA_CORE = `
 CREATE TABLE IF NOT EXISTS brain_pages (
   id SERIAL PRIMARY KEY,
   slug TEXT UNIQUE NOT NULL,
@@ -76,7 +89,6 @@ CREATE TABLE IF NOT EXISTS brain_pages (
   timeline TEXT DEFAULT '',
   frontmatter JSONB DEFAULT '{}'::jsonb,
   content_hash TEXT,
-  embedding vector(1536),
   last_enriched_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -89,7 +101,6 @@ CREATE TABLE IF NOT EXISTS brain_timeline (
   source TEXT NOT NULL,
   summary TEXT NOT NULL,
   detail TEXT DEFAULT '',
-  embedding vector(1536),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -142,6 +153,19 @@ CREATE TABLE IF NOT EXISTS activity_log (
 );
 `;
 
+/**
+ * Vector-dependent schema. Adds the embedding columns + extension. Run
+ * after SCHEMA_CORE in a try/catch so a pgvector failure logs a warning
+ * but doesn't break the app — /brain similarity search returns empty in
+ * that case, but everything else (mining, OAuth, dream cycle except
+ * embedding generation, markdown export) continues to work.
+ */
+const SCHEMA_VECTOR = `
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE brain_pages    ADD COLUMN IF NOT EXISTS embedding vector(1536);
+ALTER TABLE brain_timeline ADD COLUMN IF NOT EXISTS embedding vector(1536);
+`;
+
 // ── DB boot & singleton ──────────────────────────────────────────────
 
 let dbPromise: Promise<PGliteInstance> | null = null;
@@ -182,9 +206,13 @@ const WASM_CRASH_PATTERNS = [
   // PGlite throws an ExitStatus object when the WASM postmaster aborts
   // mid-query (e.g. on CHECK constraint violations the engine's exception
   // path can't unwind cleanly). Treating this as a crash tears the
-  // singleton down and re-inits cleanly.
+  // singleton down and re-inits cleanly. Patterns are precise — bare
+  // "ExitStatus" would false-match unrelated errors that mention the
+  // word in passing; we use the exact serialized forms describeError
+  // produces (`ExitStatus(status=...)`) and Emscripten's standard
+  // wrapper text instead.
   "Program terminated with exit(",
-  "ExitStatus",
+  "ExitStatus(status=",
 ];
 
 function isWasmCrash(message: string): boolean {
@@ -253,7 +281,7 @@ async function bootDb(): Promise<PGliteInstance> {
     // guaranteed to wait for it.
     if (db.waitReady) await db.waitReady;
 
-    await db.exec(BRAIN_SCHEMA_SQL);
+    await applySchema(db);
     return db;
   } catch (err) {
     const message = describeError(err);
@@ -261,14 +289,34 @@ async function bootDb(): Promise<PGliteInstance> {
     // back to an ephemeral in-memory instance so the app remains usable.
     if (isWasmCrash(message)) {
       console.warn(
-        `[local-shim] PGlite WASM crashed with persistent storage (${dataDir}), retrying in-memory…`,
+        `[local-shim] PGlite WASM crashed with persistent storage (${dataDir}): ${message} — retrying in-memory`,
       );
       const memDb = new PGlite(undefined, extensions ? { extensions } : undefined);
       if (memDb.waitReady) await memDb.waitReady;
-      await memDb.exec(BRAIN_SCHEMA_SQL);
+      await applySchema(memDb);
       return memDb;
     }
     throw err;
+  }
+}
+
+/**
+ * Apply the brain schema in two passes so a pgvector failure doesn't
+ * take down core tables. The core pass MUST succeed (otherwise the app
+ * is unusable). The vector pass is best-effort: if pgvector can't load,
+ * we log a warning and continue. /brain similarity search returns empty
+ * in that case but pattern mining, connector OAuth, sync, dream cycle
+ * (compiled-truth refresh + entity extraction; embedding generation
+ * fails gracefully), and markdown export all keep working.
+ */
+async function applySchema(db: PGliteInstance): Promise<void> {
+  await db.exec(SCHEMA_CORE);
+  try {
+    await db.exec(SCHEMA_VECTOR);
+  } catch (err) {
+    console.warn(
+      `[local-shim] pgvector unavailable (${describeError(err)}); embeddings + /brain search disabled this session`,
+    );
   }
 }
 
