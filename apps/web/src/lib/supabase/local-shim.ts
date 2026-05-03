@@ -766,8 +766,8 @@ class QueryBuilder<T = any> {
     }
     const params: unknown[] = [];
     const setClauses = entries.map(([col, val]) => {
-      params.push(val);
-      return `${quoteIdent(col)} = $${params.length}`;
+      const placeholder = renderValuePlaceholder(val, params);
+      return `${quoteIdent(col)} = ${placeholder}`;
     });
     const { sql: whereSql, params: whereParams } = this.buildWhere(params.length);
     params.push(...whereParams);
@@ -775,6 +775,39 @@ class QueryBuilder<T = any> {
     const result = await db.query(sql, params);
     return { data: result.rows as U, error: null };
   }
+}
+
+/**
+ * Push `val` onto `params` and return the SQL placeholder that should
+ * appear at that position, with type casts injected when necessary.
+ *
+ * pgvector's column type is `vector(N)`. PGlite's parameter binder won't
+ * coerce a text array literal to vector implicitly — without a `::vector`
+ * cast the UPDATE/INSERT throws a type-mismatch error and the row is not
+ * written. Detect numeric arrays (Float32Array or number[]) and add the
+ * cast. Other types pass through unchanged.
+ *
+ * Caught by alpha.14 user report: Dream Cycle ran, the embedding loop
+ * fired, but every brain_timeline.embedding update failed silently
+ * because the pgvector column rejected the un-cast text literal — so
+ * /brain similarity search always returned zero rows even after the
+ * env-var guard was removed.
+ */
+function renderValuePlaceholder(val: unknown, params: unknown[]): string {
+  // Float32Array (the AI SDK's preferred wire format for embeddings) +
+  // plain number[] both need ::vector cast.
+  if (
+    val instanceof Float32Array ||
+    (Array.isArray(val) && val.length > 0 && val.every((v) => typeof v === "number" && Number.isFinite(v)))
+  ) {
+    // Encode as the pgvector text literal format `[0.1,0.2,...]`. JSON
+    // stringify produces exactly that for a number array.
+    const arr = val instanceof Float32Array ? Array.from(val) : (val as number[]);
+    params.push(JSON.stringify(arr));
+    return `$${params.length}::vector`;
+  }
+  params.push(val);
+  return `$${params.length}`;
 }
 
 // ── SQL generation helpers ───────────────────────────────────────────
@@ -837,9 +870,19 @@ function buildInsertSql(
   for (const row of rows) {
     const placeholders: string[] = [];
     for (const key of keys) {
-      const val = encodeValue(row[key]);
-      params.push(val);
-      placeholders.push(`$${params.length}`);
+      // Use renderValuePlaceholder so vector(N) columns get the ::vector
+      // cast — same fix as executeUpdate. encodeValue handles JSONB
+      // stringification for non-vector object values.
+      const raw = row[key];
+      if (
+        raw instanceof Float32Array ||
+        (Array.isArray(raw) && raw.length > 0 && raw.every((v) => typeof v === "number" && Number.isFinite(v)))
+      ) {
+        placeholders.push(renderValuePlaceholder(raw, params));
+      } else {
+        params.push(encodeValue(raw));
+        placeholders.push(`$${params.length}`);
+      }
     }
     valueTuples.push(`(${placeholders.join(", ")})`);
   }
