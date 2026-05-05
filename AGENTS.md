@@ -73,6 +73,16 @@ docs/
 - **Brain agent crashes?** It calls `supabase.rpc("match_timeline_entries", ...)`. The RPC exists in `packages/engine/src/brain/schema.sql` — confirm the migration has been applied to your Supabase project.
 - **Desktop app won't launch?** Check `apps/desktop/src-tauri/tauri.conf.json` for the `beforeBuildCommand` path; it's a known historical pain point (commits `da1e4b1` + `35e7af0`).
 
+## Verification gates
+
+These come from observed failure modes in this repo. Run them before declaring work "done."
+
+1. **Multi-file refactor (5+ files touched) → fresh-agent diff audit before push.** Two ultrareviews missed regressions in a recent 24-file refactor; only an independent agent caught swallowed DB errors and dropped partial counts. Spawn a `Task` agent with no prior context, hand it `git diff origin/main...HEAD`, and ask it to look only for: swallowed errors, off-by-one in loop refactors, dropped state, and removed branches. Style feedback is out of scope.
+2. **Desktop / Tauri version bump → use `/desktop-version-bump`.** Or, manually: `pnpm --filter @workflow-miner/engine build` + `WORKFLOW_MINER_BUILD_TARGET=desktop pnpm --filter web build` + `cd apps/desktop/src-tauri && cargo check` + `jq . apps/desktop/src-tauri/tauri.conf.json` — all four must pass before editing any version string.
+3. **`local-shim.ts` change → run `pnpm --filter web test` AND `pnpm --filter web build`.** Both. The shim is the dual-mode contract; vitest covers the hash/markdown paths but only the build catches type drift in the four Supabase factories.
+4. **`brain/schema.sql` change → apply to Supabase before exercising the brain agent.** The agent calls `supabase.rpc("match_timeline_entries", ...)`. Schema drift = silent 500. Confirm with a manual chat query post-apply.
+5. **Long-form artifact (analysis, design doc, deploy report) → write to `docs/` not into the chat transcript.** Token-limit truncation has lost work in past sessions. Default to a file in `docs/superpowers/specs/` or `docs/`, then summarize in chat with the file path + 3 bullets.
+
 ## Project conventions
 
 - **Conventional commits** with scope: `feat(dream): ...`, `fix(mcp): ...`, `chore(deps): ...`. See `CONTRIBUTING.md` for full scope list.
