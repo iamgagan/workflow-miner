@@ -37,3 +37,9 @@ apps/desktop/src-tauri/binaries/node-*
 # Notarization keys
 private_keys/
 *.p8
+
+# Local agent / tooling state
+.omc/
+
+# Nested working copy with its own git history
+workflow-miner/
